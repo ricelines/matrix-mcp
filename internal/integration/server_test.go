@@ -3,72 +3,21 @@ package integration
 import (
 	"context"
 	"encoding/json"
-	"net/http/httptest"
-	"os"
 	"strings"
 	"testing"
-	"time"
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
-	"github.com/ricelines/chat/matrix-mcp-go/internal/config"
-	"github.com/ricelines/chat/matrix-mcp-go/internal/mcpserver"
-	"github.com/ricelines/chat/matrix-mcp-go/internal/scopes"
-	"github.com/ricelines/chat/matrix-mcp-go/internal/testutil/tuwunel"
 	"maunium.net/go/mautrix"
 	"maunium.net/go/mautrix/id"
 )
 
 func TestRegistrationAndDiscoveryAgainstTuwunel(t *testing.T) {
-	if os.Getenv("MATRIX_MCP_GO_RUN_INTEGRATION") != "1" {
-		t.Skip("set MATRIX_MCP_GO_RUN_INTEGRATION=1 to run dockerized Tuwunel integration tests")
-	}
-
-	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
-	defer cancel()
-
-	hs := tuwunel.Start(t, tuwunel.Options{RegistrationToken: "invite-only-token"})
-	if err := hs.WaitUntilReady(ctx); err != nil {
-		t.Fatal(err)
-	}
-
-	const botUsername = "matrixmcpgo"
-	const botPassword = "matrix-mcp-go-secret"
-	const peerUsername = "matrixmcppeer"
-	const peerPassword = "matrix-mcp-peer-secret"
-	const createdUsername = "matrixmcpcreated"
-	const createdPassword = "matrix-mcp-created-secret"
-
-	if err := hs.RegisterUser(ctx, botUsername, botPassword); err != nil {
-		t.Fatal(err)
-	}
-	if err := hs.RegisterUser(ctx, peerUsername, peerPassword); err != nil {
-		t.Fatal(err)
-	}
-
-	activeScopes, err := scopes.Parse("default,users.create")
-	if err != nil {
-		t.Fatal(err)
-	}
-	server, err := mcpserver.NewFromConfig(ctx, config.Config{
-		ListenAddr:    ":0",
-		HomeserverURL: hs.HomeserverURL,
-		Username:      botUsername,
-		Password:      botPassword,
-		Scopes:        activeScopes,
-	})
-	if err != nil {
-		t.Fatalf("NewFromConfig() error = %v", err)
-	}
-
-	httpServer := httptest.NewServer(server.Handler())
-	defer httpServer.Close()
-
-	client := mcp.NewClient(&mcp.Implementation{Name: "integration-client", Version: "1.0.0"}, nil)
-	session, err := client.Connect(ctx, &mcp.StreamableClientTransport{Endpoint: httpServer.URL}, nil)
-	if err != nil {
-		t.Fatalf("client connect: %v", err)
-	}
-	defer session.Close()
+	ctx := integrationContext(t)
+	hs := integrationHomeserver(t)
+	botUsername, botPassword := registerUser(t, ctx, hs, "matrixmcpbot")
+	_, _ = registerUser(t, ctx, hs, "matrixmcppeer")
+	createdUsername, createdPassword := uniqueCredentials("matrixmcpcreated")
+	session := newSession(t, ctx, hs, botUsername, botPassword, "default,users.create")
 
 	assertResourceContains(t, ctx, session, "matrix://modules", "matrix://module/timeline")
 	assertResourceContains(t, ctx, session, "matrix://module/users", "matrix.v1.users.create")
@@ -117,56 +66,12 @@ func TestRegistrationAndDiscoveryAgainstTuwunel(t *testing.T) {
 }
 
 func TestConversationReadWriteAgainstTuwunel(t *testing.T) {
-	if os.Getenv("MATRIX_MCP_GO_RUN_INTEGRATION") != "1" {
-		t.Skip("set MATRIX_MCP_GO_RUN_INTEGRATION=1 to run dockerized Tuwunel integration tests")
-	}
-
-	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
-	defer cancel()
-
-	hs := tuwunel.Start(t, tuwunel.Options{RegistrationToken: "invite-only-token"})
-	if err := hs.WaitUntilReady(ctx); err != nil {
-		t.Fatal(err)
-	}
-
-	const botUsername = "matrixmcpgo2"
-	const botPassword = "matrix-mcp-go-secret-2"
-	const peerUsername = "matrixmcppeer2"
-	const peerPassword = "matrix-mcp-peer-secret-2"
-	const inviteeUsername = "matrixmcpinvitee"
-	const inviteePassword = "matrix-mcp-invitee-secret"
-
-	if err := hs.RegisterUser(ctx, botUsername, botPassword); err != nil {
-		t.Fatal(err)
-	}
-	if err := hs.RegisterUser(ctx, peerUsername, peerPassword); err != nil {
-		t.Fatal(err)
-	}
-
-	activeScopes, err := scopes.Parse("default,users.create,rooms.create,rooms.join,messages.send,messages.reply,messages.edit,messages.react,messages.redact")
-	if err != nil {
-		t.Fatal(err)
-	}
-	server, err := mcpserver.NewFromConfig(ctx, config.Config{
-		ListenAddr:    ":0",
-		HomeserverURL: hs.HomeserverURL,
-		Username:      botUsername,
-		Password:      botPassword,
-		Scopes:        activeScopes,
-	})
-	if err != nil {
-		t.Fatalf("NewFromConfig() error = %v", err)
-	}
-
-	httpServer := httptest.NewServer(server.Handler())
-	defer httpServer.Close()
-
-	client := mcp.NewClient(&mcp.Implementation{Name: "integration-client", Version: "1.0.0"}, nil)
-	session, err := client.Connect(ctx, &mcp.StreamableClientTransport{Endpoint: httpServer.URL}, nil)
-	if err != nil {
-		t.Fatalf("client connect: %v", err)
-	}
-	defer session.Close()
+	ctx := integrationContext(t)
+	hs := integrationHomeserver(t)
+	botUsername, botPassword := registerUser(t, ctx, hs, "matrixmcpbot")
+	peerUsername, _, peerClient := registerAndLoginUser(t, ctx, hs, "matrixmcppeer")
+	inviteeUsername, inviteePassword := uniqueCredentials("matrixmcpinvitee")
+	session := newSession(t, ctx, hs, botUsername, botPassword, "default,users.create,rooms.create,rooms.join,messages.send,messages.reply,messages.edit,messages.react,messages.redact")
 
 	invitee := callToolMap(t, ctx, session, "matrix.v1.users.create", map[string]any{
 		"username":           inviteeUsername,
@@ -179,10 +84,6 @@ func TestConversationReadWriteAgainstTuwunel(t *testing.T) {
 		t.Fatalf("login invitee user: %v", err)
 	}
 
-	peerClient, err := hs.LoginClient(ctx, peerUsername, peerPassword)
-	if err != nil {
-		t.Fatalf("login peer user: %v", err)
-	}
 	lobby, err := peerClient.CreateRoom(ctx, &mautrix.ReqCreateRoom{Name: "Lobby", Visibility: "public", Preset: "public_chat"})
 	if err != nil {
 		t.Fatalf("peer create lobby: %v", err)
@@ -263,6 +164,12 @@ func TestConversationReadWriteAgainstTuwunel(t *testing.T) {
 	if replyID == "" {
 		t.Fatalf("messages.reply_text payload = %#v", reply)
 	}
+	replyEvent := callToolMap(t, ctx, session, "matrix.v1.timeline.event.get", map[string]any{"room_id": roomID, "event_id": replyID})
+	replyContent := nestedMap(t, nestedMap(t, replyEvent, "event"), "content")
+	replyRelation := nestedMap(t, replyContent, "m.relates_to")
+	if nestedMap(t, replyRelation, "m.in_reply_to")["event_id"] != seedID {
+		t.Fatalf("reply event did not point at original event: %#v", replyEvent)
+	}
 
 	sent := callToolMap(t, ctx, session, "matrix.v1.messages.send_text", map[string]any{"room_id": roomID, "body": "plain message"})
 	sentID := sent["event_id"].(string)
@@ -275,11 +182,25 @@ func TestConversationReadWriteAgainstTuwunel(t *testing.T) {
 	if editID == "" {
 		t.Fatalf("messages.edit_text payload = %#v", edited)
 	}
+	editEvent := callToolMap(t, ctx, session, "matrix.v1.timeline.event.get", map[string]any{"room_id": roomID, "event_id": editID})
+	editContent := nestedMap(t, nestedMap(t, editEvent, "event"), "content")
+	editRelation := nestedMap(t, editContent, "m.relates_to")
+	if editRelation["rel_type"] != "m.replace" || editRelation["event_id"] != sentID {
+		t.Fatalf("edit event relation payload = %#v", editEvent)
+	}
+	if nestedMap(t, editContent, "m.new_content")["body"] != "edited message" {
+		t.Fatalf("edit event new content payload = %#v", editEvent)
+	}
 
 	reacted := callToolMap(t, ctx, session, "matrix.v1.messages.react", map[string]any{"room_id": roomID, "event_id": seedID, "key": "👍"})
 	reactionID := reacted["event_id"].(string)
 	if reactionID == "" {
 		t.Fatalf("messages.react payload = %#v", reacted)
+	}
+	reactionEvent := callToolMap(t, ctx, session, "matrix.v1.timeline.event.get", map[string]any{"room_id": roomID, "event_id": reactionID})
+	reactionRelation := nestedMap(t, nestedMap(t, nestedMap(t, reactionEvent, "event"), "content"), "m.relates_to")
+	if reactionRelation["rel_type"] != "m.annotation" || reactionRelation["event_id"] != seedID || reactionRelation["key"] != "👍" {
+		t.Fatalf("reaction event payload = %#v", reactionEvent)
 	}
 
 	messages := callToolMap(t, ctx, session, "matrix.v1.timeline.messages.list", map[string]any{"room_id": roomID, "limit": 20})
@@ -309,6 +230,10 @@ func TestConversationReadWriteAgainstTuwunel(t *testing.T) {
 	if redactionID == "" {
 		t.Fatalf("messages.redact payload = %#v", redacted)
 	}
+	redactionEvent := callToolMap(t, ctx, session, "matrix.v1.timeline.event.get", map[string]any{"room_id": roomID, "event_id": redactionID})
+	if nestedMap(t, redactionEvent, "event")["redacts"] != reactionID {
+		t.Fatalf("redaction event payload = %#v", redactionEvent)
+	}
 
 	botClient, err := hs.LoginClient(ctx, botUsername, botPassword)
 	if err != nil {
@@ -316,6 +241,102 @@ func TestConversationReadWriteAgainstTuwunel(t *testing.T) {
 	}
 	if _, err := botClient.GetEvent(ctx, id.RoomID(roomID), id.EventID(redactionID)); err != nil {
 		t.Fatalf("GetEvent(redaction) error = %v", err)
+	}
+}
+
+func TestPublicRoomCreationAgainstTuwunel(t *testing.T) {
+	ctx := integrationContext(t)
+	hs := integrationHomeserver(t)
+	botUsername, botPassword := registerUser(t, ctx, hs, "matrixmcpbot")
+	_, _, peerClient := registerAndLoginUser(t, ctx, hs, "matrixmcppeer")
+	session := newSession(t, ctx, hs, botUsername, botPassword, "default,rooms.create")
+
+	publicRoom := callToolMap(t, ctx, session, "matrix.v1.rooms.create", map[string]any{
+		"name":      "Public Integration Room",
+		"topic":     "shared-homeserver coverage",
+		"is_public": true,
+	})
+	roomID := publicRoom["room_id"].(string)
+	if roomID == "" {
+		t.Fatalf("rooms.create public payload = %#v", publicRoom)
+	}
+
+	if _, err := peerClient.JoinRoom(ctx, roomID, nil); err != nil {
+		t.Fatalf("peer join tool-created public room: %v", err)
+	}
+
+	summary := callToolMap(t, ctx, session, "matrix.v1.rooms.get", map[string]any{"room_id": roomID})
+	room := nestedMap(t, summary, "room")
+	if room["room_id"] != roomID || room["topic"] != "shared-homeserver coverage" {
+		t.Fatalf("rooms.get public room payload = %#v", summary)
+	}
+
+	joinRules := callToolMap(t, ctx, session, "matrix.v1.room.state.get", map[string]any{
+		"room_id":    roomID,
+		"event_type": "m.room.join_rules",
+	})
+	joinRuleEvent := nestedMap(t, joinRules, "event")
+	if joinRuleEvent["state_key"] != "" || nestedMap(t, joinRuleEvent, "content")["join_rule"] != "public" {
+		t.Fatalf("room.state.get join rules payload = %#v", joinRules)
+	}
+}
+
+func TestTimelinePaginationAgainstTuwunel(t *testing.T) {
+	ctx := integrationContext(t)
+	hs := integrationHomeserver(t)
+	botUsername, botPassword := registerUser(t, ctx, hs, "matrixmcpbot")
+	peerUsername, _, peerClient := registerAndLoginUser(t, ctx, hs, "matrixmcppeer")
+	session := newSession(t, ctx, hs, botUsername, botPassword, "default,rooms.create")
+
+	privateRoom := callToolMap(t, ctx, session, "matrix.v1.rooms.create", map[string]any{
+		"name":   "Pagination Room",
+		"invite": []string{fmtUserID(peerUsername)},
+	})
+	roomID := privateRoom["room_id"].(string)
+	if roomID == "" {
+		t.Fatalf("rooms.create pagination payload = %#v", privateRoom)
+	}
+
+	if _, err := peerClient.JoinRoom(ctx, roomID, nil); err != nil {
+		t.Fatalf("peer join pagination room: %v", err)
+	}
+
+	first, err := peerClient.SendText(ctx, id.RoomID(roomID), "one")
+	if err != nil {
+		t.Fatalf("peer send first text: %v", err)
+	}
+	second, err := peerClient.SendText(ctx, id.RoomID(roomID), "two")
+	if err != nil {
+		t.Fatalf("peer send second text: %v", err)
+	}
+	third, err := peerClient.SendText(ctx, id.RoomID(roomID), "three")
+	if err != nil {
+		t.Fatalf("peer send third text: %v", err)
+	}
+
+	firstPage := callToolMap(t, ctx, session, "matrix.v1.timeline.messages.list", map[string]any{
+		"room_id":   roomID,
+		"direction": "b",
+		"limit":     2,
+	})
+	firstPageIDs := eventIDs(firstPage["events"].([]any))
+	if len(firstPageIDs) != 2 || !containsEventID(firstPageIDs, second.EventID.String()) || !containsEventID(firstPageIDs, third.EventID.String()) || containsEventID(firstPageIDs, first.EventID.String()) {
+		t.Fatalf("first pagination page payload = %#v", firstPage)
+	}
+
+	endToken, _ := firstPage["end"].(string)
+	if endToken == "" {
+		t.Fatalf("first pagination page missing end token: %#v", firstPage)
+	}
+
+	secondPage := callToolMap(t, ctx, session, "matrix.v1.timeline.messages.list", map[string]any{
+		"room_id":   roomID,
+		"from":      endToken,
+		"direction": "b",
+		"limit":     10,
+	})
+	if !containsEventID(eventIDs(secondPage["events"].([]any)), first.EventID.String()) {
+		t.Fatalf("second pagination page payload = %#v", secondPage)
 	}
 }
 
@@ -359,4 +380,41 @@ func containsEvent(events []any, eventID string) bool {
 
 func fmtUserID(localpart string) string {
 	return "@" + localpart + ":localhost"
+}
+
+func nestedMap(t *testing.T, value map[string]any, key string) map[string]any {
+	t.Helper()
+	raw, ok := value[key]
+	if !ok {
+		t.Fatalf("missing key %q in %#v", key, value)
+	}
+	result, ok := raw.(map[string]any)
+	if !ok {
+		t.Fatalf("value for %q is %T, want map[string]any", key, raw)
+	}
+	return result
+}
+
+func eventIDs(events []any) []string {
+	ids := make([]string, 0, len(events))
+	for _, raw := range events {
+		eventMap, ok := raw.(map[string]any)
+		if !ok {
+			continue
+		}
+		eventID, ok := eventMap["event_id"].(string)
+		if ok {
+			ids = append(ids, eventID)
+		}
+	}
+	return ids
+}
+
+func containsEventID(eventIDs []string, eventID string) bool {
+	for _, candidate := range eventIDs {
+		if candidate == eventID {
+			return true
+		}
+	}
+	return false
 }

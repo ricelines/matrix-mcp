@@ -72,6 +72,40 @@ func Start(t testing.TB, opts Options) *Instance {
 	return inst
 }
 
+func StartManaged(opts Options) (*Instance, error) {
+	if _, err := exec.LookPath("docker"); err != nil {
+		return nil, fmt.Errorf("docker is required for integration tests: %w", err)
+	}
+
+	baseDir, err := os.MkdirTemp("", "matrix-mcp-go-tuwunel-*")
+	if err != nil {
+		return nil, fmt.Errorf("create temp dir: %w", err)
+	}
+
+	inst, err := startWithBaseDir(baseDir, opts)
+	if err != nil {
+		_ = os.RemoveAll(baseDir)
+		return nil, err
+	}
+	return inst, nil
+}
+
+func (i *Instance) Close() error {
+	var closeErr error
+	if i.containerName != "" {
+		output, err := exec.Command("docker", "stop", i.containerName).CombinedOutput()
+		if err != nil {
+			closeErr = fmt.Errorf("stop container %s: %w\n%s", i.containerName, err, output)
+		}
+	}
+	if i.baseDir != "" {
+		if err := os.RemoveAll(i.baseDir); err != nil && closeErr == nil {
+			closeErr = fmt.Errorf("remove temp dir %s: %w", i.baseDir, err)
+		}
+	}
+	return closeErr
+}
+
 func (i *Instance) WaitUntilReady(ctx context.Context) error {
 	deadline := time.Now().Add(60 * time.Second)
 	client := &http.Client{Timeout: 2 * time.Second}
@@ -157,4 +191,47 @@ func config(databasePath string, registrationToken string) string {
 		body += fmt.Sprintf("registration_token = %q\n", registrationToken)
 	}
 	return body
+}
+
+func startWithBaseDir(baseDir string, opts Options) (*Instance, error) {
+	serverDir := filepath.Join(baseDir, "tuwunel")
+	if err := os.MkdirAll(filepath.Join(serverDir, "database"), 0o755); err != nil {
+		return nil, fmt.Errorf("mkdir database: %w", err)
+	}
+	if err := os.WriteFile(filepath.Join(serverDir, "tuwunel.toml"), []byte(config("/data/database", opts.RegistrationToken)), 0o644); err != nil {
+		return nil, fmt.Errorf("write config: %w", err)
+	}
+
+	hostPort, err := reservePortValue()
+	if err != nil {
+		return nil, fmt.Errorf("reserve port: %w", err)
+	}
+	containerName := fmt.Sprintf("matrix-mcp-go-%d", time.Now().UnixNano())
+	inst := &Instance{
+		containerName:     containerName,
+		baseDir:           baseDir,
+		HomeserverURL:     fmt.Sprintf("http://127.0.0.1:%d", hostPort),
+		RegistrationToken: opts.RegistrationToken,
+	}
+
+	cmd := exec.Command("docker", "run", "-d", "--rm", "--name", containerName,
+		"-e", "TUWUNEL_CONFIG=/data/tuwunel.toml",
+		"-v", fmt.Sprintf("%s:/data", serverDir),
+		"-p", fmt.Sprintf("%d:8008", hostPort),
+		image,
+	)
+	if output, err := cmd.CombinedOutput(); err != nil {
+		return nil, fmt.Errorf("docker run: %w\n%s", err, output)
+	}
+
+	return inst, nil
+}
+
+func reservePortValue() (int, error) {
+	listener, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		return 0, err
+	}
+	defer listener.Close()
+	return listener.Addr().(*net.TCPAddr).Port, nil
 }
