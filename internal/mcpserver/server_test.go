@@ -300,6 +300,67 @@ func TestRecursiveDiscoveryResources(t *testing.T) {
 	}
 }
 
+func TestDiscoveryResourcesStayShallowAndDiscoveredToolsCanBeCalledDirectly(t *testing.T) {
+	backend := &fakeMatrix{
+		reactionMessage: matrixclient.EventWriteResult{EventID: "$reaction"},
+	}
+	active, err := scopes.Parse("default,messages.react")
+	if err != nil {
+		t.Fatalf("Parse() error = %v", err)
+	}
+	server := New(backend, active)
+	session := connectTestSession(t, server)
+	ctx := context.Background()
+
+	root, err := session.ReadResource(ctx, &mcp.ReadResourceParams{URI: "matrix://modules"})
+	if err != nil {
+		t.Fatalf("ReadResource(modules) error = %v", err)
+	}
+	rootText := root.Contents[0].Text
+	if !containsAll(rootText, "matrix://module/messages", "matrix://module/rooms", "matrix://module/timeline") {
+		t.Fatalf("unexpected root resource body: %s", rootText)
+	}
+	if strings.Contains(rootText, "matrix://tool/") {
+		t.Fatalf("root resource should not inline tool detail links: %s", rootText)
+	}
+	if strings.Contains(rootText, "## Input schema") {
+		t.Fatalf("root resource should not inline schemas: %s", rootText)
+	}
+
+	module, err := session.ReadResource(ctx, &mcp.ReadResourceParams{URI: "matrix://module/messages"})
+	if err != nil {
+		t.Fatalf("ReadResource(module/messages) error = %v", err)
+	}
+	moduleText := module.Contents[0].Text
+	if !containsAll(moduleText, "matrix.v1.messages.react", "matrix://tool/matrix.v1.messages.react") {
+		t.Fatalf("unexpected module resource body: %s", moduleText)
+	}
+	if strings.Contains(moduleText, "## Input schema") || strings.Contains(moduleText, "## Output schema") {
+		t.Fatalf("module resource should stay summary-level, not inline tool schemas: %s", moduleText)
+	}
+	if strings.Contains(moduleText, "matrix://module/") {
+		t.Fatalf("module resource should list tools, not point to a deeper discovery tree: %s", moduleText)
+	}
+
+	result, err := session.CallTool(ctx, &mcp.CallToolParams{
+		Name: "matrix.v1.messages.react",
+		Arguments: map[string]any{
+			"room_id":  "!joined:example.com",
+			"event_id": "$event",
+			"key":      "eyes",
+		},
+	})
+	if err != nil {
+		t.Fatalf("messages.react error = %v", err)
+	}
+	if structuredMap(t, result)["event_id"] != "$reaction" {
+		t.Fatalf("unexpected messages.react payload = %#v", structuredMap(t, result))
+	}
+	if backend.lastReact.RoomID != "!joined:example.com" || backend.lastReact.EventID != "$event" || backend.lastReact.Key != "eyes" {
+		t.Fatalf("unexpected direct tool call request = %#v", backend.lastReact)
+	}
+}
+
 func TestClientAndServerTools(t *testing.T) {
 	backend := &fakeMatrix{
 		identity:     matrixclient.Identity{UserID: "@bot:example.com", DeviceID: "DEVICE", HomeserverURL: "http://example.com"},

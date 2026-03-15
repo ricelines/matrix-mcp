@@ -217,6 +217,8 @@ The exact tool names are discoverable from the MCP server itself. The intended f
 
 That keeps client-side prompts and tool selection grounded in the server's own advertised surface instead of stale documentation.
 
+For an agent-facing walkthrough with actual discovery-resource output and realistic `tools/call` sequences, see `docs/agent-examples.md`.
+
 ## Operational notes
 
 - The server uses HTTP MCP, not stdio.
