@@ -23,7 +23,6 @@ type registerAvailableOutput struct {
 type createUserInput struct {
 	Username                 string `json:"username" jsonschema:"New Matrix username localpart"`
 	Password                 string `json:"password,omitempty" jsonschema:"Optional password. When omitted, the server generates one and returns it."`
-	RegistrationToken        string `json:"registration_token,omitempty" jsonschema:"Optional Matrix registration token for homeservers that require m.login.registration_token"`
 	InitialDeviceDisplayName string `json:"initial_device_display_name,omitempty" jsonschema:"Optional initial device display name for the created account"`
 	InhibitLogin             bool   `json:"inhibit_login,omitempty" jsonschema:"When true, request account creation without an initial access token"`
 }
@@ -109,7 +108,7 @@ func RegisterUsers(r *catalog.Registrar, deps Dependencies, active scopes.Set) {
 	if active.Allows(scopes.ScopeUsersCreate) {
 		catalog.AddTool(r, "users", scopes.ScopeUsersCreate, &mcp.Tool{
 			Name:        "matrix.v1.users.create",
-			Description: "Create a new Matrix user using the homeserver registration API, including registration-token flows when required.",
+			Description: "Create a new Matrix user using the homeserver registration API. If the homeserver requires a registration token, configure it when starting matrix-mcp.",
 		}, func(ctx context.Context, req *mcp.CallToolRequest, input createUserInput) (*mcp.CallToolResult, createUserOutput, error) {
 			if err := requireNonEmpty("username", input.Username); err != nil {
 				return nil, createUserOutput{}, err
@@ -120,7 +119,6 @@ func RegisterUsers(r *catalog.Registrar, deps Dependencies, active scopes.Set) {
 			created, err := deps.Matrix.CreateUser(ctx, matrixclient.CreateUserRequest{
 				Username:                 input.Username,
 				Password:                 input.Password,
-				RegistrationToken:        input.RegistrationToken,
 				InitialDeviceDisplayName: input.InitialDeviceDisplayName,
 				InhibitLogin:             input.InhibitLogin,
 			})

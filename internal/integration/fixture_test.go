@@ -95,11 +95,12 @@ func newIntegrationSession(t *testing.T, ctx context.Context, hs *tuwunel.Instan
 	}
 
 	server, err := mcpserver.NewFromConfig(ctx, config.Config{
-		ListenAddr:    ":0",
-		HomeserverURL: hs.HomeserverURL,
-		Username:      username,
-		Password:      password,
-		Scopes:        activeScopes,
+		ListenAddr:        ":0",
+		HomeserverURL:     hs.HomeserverURL,
+		Username:          username,
+		Password:          password,
+		RegistrationToken: hs.RegistrationToken,
+		Scopes:            activeScopes,
 	})
 	if err != nil {
 		t.Fatalf("NewFromConfig() error = %v", err)

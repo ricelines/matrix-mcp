@@ -438,7 +438,7 @@ func TestUsersTools(t *testing.T) {
 		t.Fatalf("available payload = %#v", structuredMap(t, available))
 	}
 
-	created, err := session.CallTool(ctx, &mcp.CallToolParams{Name: "matrix.v1.users.create", Arguments: map[string]any{"username": "alice", "registration_token": "invite-token"}})
+	created, err := session.CallTool(ctx, &mcp.CallToolParams{Name: "matrix.v1.users.create", Arguments: map[string]any{"username": "alice"}})
 	if err != nil {
 		t.Fatalf("users.create error = %v", err)
 	}
@@ -446,7 +446,7 @@ func TestUsersTools(t *testing.T) {
 	if createdPayload["user_id"] != "@alice:example.com" {
 		t.Fatalf("created payload = %#v", createdPayload)
 	}
-	if backend.lastCreateUser.Username != "alice" || backend.lastCreateUser.RegistrationToken != "invite-token" {
+	if backend.lastCreateUser.Username != "alice" {
 		t.Fatalf("lastCreateUser = %#v", backend.lastCreateUser)
 	}
 

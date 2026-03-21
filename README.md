@@ -43,7 +43,7 @@ Important constraints:
 - It can only read what that account can read.
 - Write operations are available only if you enable the corresponding scopes.
 - Homeserver permissions still apply. For example, enabling `rooms.create` does not bypass a homeserver policy that disallows room creation for that account.
-- If your homeserver requires a registration token for account creation, callers must provide one when using the user-creation tool.
+- If your homeserver requires a registration token for account creation, configure it when starting `matrix-mcp`; the user-creation tool does not accept it per call.
 
 Use a dedicated bot or service account unless you have a specific reason not to.
 
@@ -111,10 +111,11 @@ The Amber config schema exposes these fields:
 - `homeserver_url`
 - `username`
 - `password`
+- `registration_token`
 - `scopes`
 - `listen_addr`
 
-`password` is marked secret in the manifest schema.
+`password` and `registration_token` are marked secret in the manifest schema.
 
 ## Docker
 
@@ -139,6 +140,7 @@ Required environment variables:
 Optional environment variables:
 
 - `MATRIX_MCP_LISTEN_ADDR`: listen address for the HTTP server, default `:8080`
+- `MATRIX_REGISTRATION_TOKEN`: registration token used by `matrix.v1.users.create` on homeservers that require `m.login.registration_token`
 - `MATRIX_MCP_SCOPES`: comma-separated scope list, default `default`
 
 Example with explicit listen address and write capabilities:

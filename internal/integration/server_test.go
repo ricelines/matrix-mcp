@@ -21,7 +21,7 @@ func TestRegistrationAndDiscoveryAgainstTuwunel(t *testing.T) {
 
 	assertResourceContains(t, ctx, session, "matrix://modules", "matrix://module/timeline")
 	assertResourceContains(t, ctx, session, "matrix://module/users", "matrix.v1.users.create")
-	assertResourceContains(t, ctx, session, "matrix://tool/matrix.v1.users.create", "registration_token")
+	assertResourceNotContains(t, ctx, session, "matrix://tool/matrix.v1.users.create", "registration_token")
 	assertResourceContains(t, ctx, session, "matrix://scopes", "timeline.read")
 
 	identity := callToolMap(t, ctx, session, "matrix.v1.client.identity.get", nil)
@@ -49,7 +49,6 @@ func TestRegistrationAndDiscoveryAgainstTuwunel(t *testing.T) {
 	created := callToolMap(t, ctx, session, "matrix.v1.users.create", map[string]any{
 		"username":                    createdUsername,
 		"password":                    createdPassword,
-		"registration_token":          hs.RegistrationToken,
 		"initial_device_display_name": "matrix-mcp-go integration",
 	})
 	if created["user_id"] == "" {
@@ -74,9 +73,8 @@ func TestConversationReadWriteAgainstTuwunel(t *testing.T) {
 	session := newSession(t, ctx, hs, botUsername, botPassword, "default,users.create,rooms.create,rooms.join,messages.send,messages.reply,messages.edit,messages.react,messages.redact")
 
 	invitee := callToolMap(t, ctx, session, "matrix.v1.users.create", map[string]any{
-		"username":           inviteeUsername,
-		"password":           inviteePassword,
-		"registration_token": hs.RegistrationToken,
+		"username": inviteeUsername,
+		"password": inviteePassword,
 	})
 	inviteeUserID := invitee["user_id"].(string)
 	inviteeClient, err := hs.LoginClient(ctx, inviteeUsername, inviteePassword)
@@ -348,6 +346,17 @@ func assertResourceContains(t *testing.T, ctx context.Context, session *mcp.Clie
 	}
 	if !strings.Contains(result.Contents[0].Text, needle) {
 		t.Fatalf("resource %s did not contain %q:\n%s", uri, needle, result.Contents[0].Text)
+	}
+}
+
+func assertResourceNotContains(t *testing.T, ctx context.Context, session *mcp.ClientSession, uri string, needle string) {
+	t.Helper()
+	result, err := session.ReadResource(ctx, &mcp.ReadResourceParams{URI: uri})
+	if err != nil {
+		t.Fatalf("ReadResource(%s) error = %v", uri, err)
+	}
+	if strings.Contains(result.Contents[0].Text, needle) {
+		t.Fatalf("resource %s unexpectedly contained %q:\n%s", uri, needle, result.Contents[0].Text)
 	}
 }
 

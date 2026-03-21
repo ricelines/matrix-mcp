@@ -6,6 +6,7 @@ func TestFromEnvDefaultsScopesAndListenAddr(t *testing.T) {
 	t.Setenv(envHomeserverURL, "http://example.com")
 	t.Setenv(envUsername, "bot")
 	t.Setenv(envPassword, "secret")
+	t.Setenv(envRegistrationToken, " invite-token ")
 	t.Setenv(envListenAddr, "")
 	t.Setenv(envScopes, "")
 
@@ -15,6 +16,9 @@ func TestFromEnvDefaultsScopesAndListenAddr(t *testing.T) {
 	}
 	if cfg.ListenAddr != defaultListenAddr {
 		t.Fatalf("ListenAddr = %q, want %q", cfg.ListenAddr, defaultListenAddr)
+	}
+	if cfg.RegistrationToken != "invite-token" {
+		t.Fatalf("RegistrationToken = %q, want invite-token", cfg.RegistrationToken)
 	}
 	if got := cfg.Scopes.Names(); len(got) == 0 {
 		t.Fatalf("default scopes should not be empty")

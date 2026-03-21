@@ -9,21 +9,23 @@ import (
 )
 
 const (
-	envListenAddr    = "MATRIX_MCP_LISTEN_ADDR"
-	envHomeserverURL = "MATRIX_HOMESERVER_URL"
-	envUsername      = "MATRIX_USERNAME"
-	envPassword      = "MATRIX_PASSWORD"
-	envScopes        = "MATRIX_MCP_SCOPES"
+	envListenAddr        = "MATRIX_MCP_LISTEN_ADDR"
+	envHomeserverURL     = "MATRIX_HOMESERVER_URL"
+	envUsername          = "MATRIX_USERNAME"
+	envPassword          = "MATRIX_PASSWORD"
+	envRegistrationToken = "MATRIX_REGISTRATION_TOKEN"
+	envScopes            = "MATRIX_MCP_SCOPES"
 
 	defaultListenAddr = ":8080"
 )
 
 type Config struct {
-	ListenAddr    string
-	HomeserverURL string
-	Username      string
-	Password      string
-	Scopes        scopes.Set
+	ListenAddr        string
+	HomeserverURL     string
+	Username          string
+	Password          string
+	RegistrationToken string
+	Scopes            scopes.Set
 }
 
 func FromEnv() (Config, error) {
@@ -33,11 +35,12 @@ func FromEnv() (Config, error) {
 	}
 
 	cfg := Config{
-		ListenAddr:    strings.TrimSpace(os.Getenv(envListenAddr)),
-		HomeserverURL: strings.TrimSpace(os.Getenv(envHomeserverURL)),
-		Username:      strings.TrimSpace(os.Getenv(envUsername)),
-		Password:      strings.TrimSpace(os.Getenv(envPassword)),
-		Scopes:        parsedScopes,
+		ListenAddr:        strings.TrimSpace(os.Getenv(envListenAddr)),
+		HomeserverURL:     strings.TrimSpace(os.Getenv(envHomeserverURL)),
+		Username:          strings.TrimSpace(os.Getenv(envUsername)),
+		Password:          strings.TrimSpace(os.Getenv(envPassword)),
+		RegistrationToken: strings.TrimSpace(os.Getenv(envRegistrationToken)),
+		Scopes:            parsedScopes,
 	}
 	if cfg.ListenAddr == "" {
 		cfg.ListenAddr = defaultListenAddr

@@ -1,16 +1,19 @@
 package matrix
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
-	"net"
+	"io"
 	"net/http"
 	"testing"
+
+	"maunium.net/go/mautrix"
 )
 
 func TestCreateUserWithRegistrationToken(t *testing.T) {
 	var calls int
-	server := newIPv4Server(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	svc := newRegistrationTestService(t, func(r *http.Request) *http.Response {
 		if r.URL.Path != "/_matrix/client/v3/register" {
 			t.Fatalf("unexpected path %s", r.URL.Path)
 		}
@@ -24,8 +27,7 @@ func TestCreateUserWithRegistrationToken(t *testing.T) {
 			if payload["auth"] != nil {
 				t.Fatalf("unexpected auth in initial request: %#v", payload)
 			}
-			w.WriteHeader(http.StatusUnauthorized)
-			_ = json.NewEncoder(w).Encode(map[string]any{
+			return jsonResponse(t, r, http.StatusUnauthorized, map[string]any{
 				"session": "sess-1",
 				"flows":   []map[string]any{{"stages": []string{"m.login.registration_token"}}},
 			})
@@ -34,22 +36,20 @@ func TestCreateUserWithRegistrationToken(t *testing.T) {
 			if auth["type"] != "m.login.registration_token" || auth["token"] != "invite-token" || auth["session"] != "sess-1" {
 				t.Fatalf("unexpected token auth payload: %#v", auth)
 			}
-			_ = json.NewEncoder(w).Encode(map[string]any{
+			return jsonResponse(t, r, http.StatusOK, map[string]any{
 				"user_id":      "@alice:example.com",
 				"device_id":    "DEV1",
 				"access_token": "access-token",
 			})
 		default:
 			t.Fatalf("unexpected registration call %d", calls)
+			return nil
 		}
-	}))
-	defer server.Close()
-
-	svc := &Service{homeserverURL: server.URL}
+	})
+	svc.registrationToken = "invite-token"
 	created, err := svc.CreateUser(context.Background(), CreateUserRequest{
-		Username:          "alice",
-		Password:          "wonderland",
-		RegistrationToken: "invite-token",
+		Username: "alice",
+		Password: "wonderland",
 	})
 	if err != nil {
 		t.Fatalf("CreateUser() error = %v", err)
@@ -59,26 +59,22 @@ func TestCreateUserWithRegistrationToken(t *testing.T) {
 	}
 }
 
-func TestCreateUserRequiresRegistrationTokenWhenHomeserverDemandsIt(t *testing.T) {
-	server := newIPv4Server(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.WriteHeader(http.StatusUnauthorized)
-		_ = json.NewEncoder(w).Encode(map[string]any{
+func TestCreateUserRequiresConfiguredRegistrationTokenWhenHomeserverDemandsIt(t *testing.T) {
+	svc := newRegistrationTestService(t, func(r *http.Request) *http.Response {
+		return jsonResponse(t, r, http.StatusUnauthorized, map[string]any{
 			"session": "sess-1",
 			"flows":   []map[string]any{{"stages": []string{"m.login.registration_token"}}},
 		})
-	}))
-	defer server.Close()
-
-	svc := &Service{homeserverURL: server.URL}
+	})
 	_, err := svc.CreateUser(context.Background(), CreateUserRequest{Username: "alice", Password: "wonderland"})
-	if err == nil || err.Error() != "homeserver requires a registration_token for account creation" {
-		t.Fatalf("CreateUser() error = %v, want registration_token requirement", err)
+	if err == nil || err.Error() != "homeserver requires a registration token for account creation, but matrix-mcp was started without one" {
+		t.Fatalf("CreateUser() error = %v, want configured registration token requirement", err)
 	}
 }
 
 func TestCreateUserFallsBackToDummyAuth(t *testing.T) {
 	var calls int
-	server := newIPv4Server(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	svc := newRegistrationTestService(t, func(r *http.Request) *http.Response {
 		calls++
 		var payload map[string]any
 		if err := json.NewDecoder(r.Body).Decode(&payload); err != nil {
@@ -86,8 +82,7 @@ func TestCreateUserFallsBackToDummyAuth(t *testing.T) {
 		}
 		switch calls {
 		case 1:
-			w.WriteHeader(http.StatusUnauthorized)
-			_ = json.NewEncoder(w).Encode(map[string]any{
+			return jsonResponse(t, r, http.StatusUnauthorized, map[string]any{
 				"session": "sess-1",
 				"flows":   []map[string]any{{"stages": []string{"m.login.dummy"}}},
 			})
@@ -96,14 +91,12 @@ func TestCreateUserFallsBackToDummyAuth(t *testing.T) {
 			if auth["type"] != "m.login.dummy" || auth["session"] != "sess-1" {
 				t.Fatalf("unexpected dummy auth payload: %#v", auth)
 			}
-			_ = json.NewEncoder(w).Encode(map[string]any{"user_id": "@alice:example.com"})
+			return jsonResponse(t, r, http.StatusOK, map[string]any{"user_id": "@alice:example.com"})
 		default:
 			t.Fatalf("unexpected registration call %d", calls)
+			return nil
 		}
-	}))
-	defer server.Close()
-
-	svc := &Service{homeserverURL: server.URL}
+	})
 	created, err := svc.CreateUser(context.Background(), CreateUserRequest{Username: "alice"})
 	if err != nil {
 		t.Fatalf("CreateUser() error = %v", err)
@@ -113,26 +106,40 @@ func TestCreateUserFallsBackToDummyAuth(t *testing.T) {
 	}
 }
 
-type testServer struct {
-	URL   string
-	Close func()
+func newRegistrationTestService(t *testing.T, responder func(*http.Request) *http.Response) *Service {
+	t.Helper()
+	return &Service{
+		homeserverURL: "https://example.com",
+		newRegistrationClient: func(homeserverURL string) (*mautrix.Client, error) {
+			client, err := mautrix.NewClient(homeserverURL, "", "")
+			if err != nil {
+				return nil, err
+			}
+			client.Client = &http.Client{Transport: roundTripFunc(func(r *http.Request) (*http.Response, error) {
+				return responder(r), nil
+			})}
+			return client, nil
+		},
+	}
 }
 
-func newIPv4Server(t *testing.T, handler http.Handler) *testServer {
+type roundTripFunc func(*http.Request) (*http.Response, error)
+
+func (f roundTripFunc) RoundTrip(r *http.Request) (*http.Response, error) {
+	return f(r)
+}
+
+func jsonResponse(t *testing.T, req *http.Request, status int, payload map[string]any) *http.Response {
 	t.Helper()
-	listener, err := net.Listen("tcp4", "127.0.0.1:0")
+	body, err := json.Marshal(payload)
 	if err != nil {
-		t.Fatalf("listen tcp4: %v", err)
+		t.Fatalf("marshal response: %v", err)
 	}
-	httpServer := &http.Server{Handler: handler}
-	go func() {
-		_ = httpServer.Serve(listener)
-	}()
-	return &testServer{
-		URL: "http://" + listener.Addr().String(),
-		Close: func() {
-			_ = httpServer.Close()
-			_ = listener.Close()
-		},
+	return &http.Response{
+		StatusCode: status,
+		Status:     http.StatusText(status),
+		Header:     http.Header{"Content-Type": []string{"application/json"}},
+		Body:       io.NopCloser(bytes.NewReader(body)),
+		Request:    req,
 	}
 }

@@ -44,7 +44,6 @@ type UserProfile struct {
 type CreateUserRequest struct {
 	Username                 string
 	Password                 string
-	RegistrationToken        string
 	InitialDeviceDisplayName string
 	InhibitLogin             bool
 }
@@ -222,8 +221,10 @@ type API interface {
 }
 
 type Service struct {
-	client        *mautrix.Client
-	homeserverURL string
+	client                *mautrix.Client
+	homeserverURL         string
+	registrationToken     string
+	newRegistrationClient func(string) (*mautrix.Client, error)
 }
 
 type registrationTokenAuthData struct {
@@ -250,7 +251,11 @@ func New(ctx context.Context, cfg config.Config) (*Service, error) {
 		return nil, fmt.Errorf("matrix login: %w", err)
 	}
 
-	return &Service{client: client, homeserverURL: cfg.HomeserverURL}, nil
+	return &Service{
+		client:            client,
+		homeserverURL:     cfg.HomeserverURL,
+		registrationToken: cfg.RegistrationToken,
+	}, nil
 }
 
 func (s *Service) Identity() Identity {
@@ -319,7 +324,13 @@ func (s *Service) CreateUser(ctx context.Context, req CreateUserRequest) (Create
 		generated = true
 	}
 
-	client, err := mautrix.NewClient(s.homeserverURL, "", "")
+	newClient := s.newRegistrationClient
+	if newClient == nil {
+		newClient = func(homeserverURL string) (*mautrix.Client, error) {
+			return mautrix.NewClient(homeserverURL, "", "")
+		}
+	}
+	client, err := newClient(s.homeserverURL)
 	if err != nil {
 		return CreateUserResult{}, fmt.Errorf("build registration client: %w", err)
 	}
@@ -336,7 +347,7 @@ func (s *Service) CreateUser(ctx context.Context, req CreateUserRequest) (Create
 		return CreateUserResult{}, fmt.Errorf("start register user: %w", err)
 	}
 	if resp == nil {
-		auth, authErr := buildRegistrationAuth(uia, req.RegistrationToken)
+		auth, authErr := buildRegistrationAuth(uia, s.registrationToken)
 		if authErr != nil {
 			return CreateUserResult{}, authErr
 		}
@@ -683,7 +694,7 @@ func buildRegistrationAuth(uia *mautrix.RespUserInteractive, registrationToken s
 		return mautrix.BaseAuthData{Type: mautrix.AuthTypeDummy, Session: uia.Session}, nil
 	}
 	if uia.HasSingleStageFlow(registrationTokenAuthType) {
-		return nil, errors.New("homeserver requires a registration_token for account creation")
+		return nil, errors.New("homeserver requires a registration token for account creation, but matrix-mcp was started without one")
 	}
 	return nil, errors.New("unsupported registration auth flow")
 }

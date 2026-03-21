@@ -7,6 +7,11 @@
       homeserver_url: { type: "string" },
       username: { type: "string" },
       password: { type: "string", secret: true },
+      registration_token: {
+        type: "string",
+        secret: true,
+        description: "Optional registration token used by user creation on homeservers that require m.login.registration_token.",
+      },
       scopes: {
         type: "string",
         default: "default",
@@ -25,6 +30,7 @@
       MATRIX_HOMESERVER_URL: "${config.homeserver_url}",
       MATRIX_USERNAME: "${config.username}",
       MATRIX_PASSWORD: "${config.password}",
+      MATRIX_REGISTRATION_TOKEN: "${config.registration_token}",
       MATRIX_MCP_SCOPES: "${config.scopes}",
       MATRIX_MCP_LISTEN_ADDR: "${config.listen_addr}",
     },
