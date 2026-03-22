@@ -1,6 +1,6 @@
 # matrix-mcp-go
 
-`matrix-mcp-go` is an MCP server for Matrix. You run it against one Matrix account, and an MCP client can then inspect rooms, users, state, and timelines on that account's behalf. If you enable write scopes, it can also create users, create or join rooms, and send or modify messages.
+`matrix-mcp-go` is an MCP server for Matrix. You run it against one Matrix account, and an MCP client can then inspect rooms, users, state, and timelines on that account's behalf. If you enable additional scopes, it can also resolve or manage room aliases, inspect or change room-directory visibility, create users, create or join rooms, and send or modify messages.
 
 This server is for people who want Matrix available as a tool surface inside an MCP-capable workflow. It is not a Matrix bridge and it is not a multi-user service. Everything it does is done as the configured Matrix account.
 
@@ -16,10 +16,17 @@ Out of the box, the server exposes read-oriented Matrix tools for:
 - room state lookup
 - timeline pagination, event fetch, event context, and relation inspection
 
+If you opt into additional room metadata scopes, it can also:
+
+- resolve room aliases
+- inspect room-directory visibility
+
 If you opt into write scopes, it can also:
 
 - create Matrix users
 - create rooms
+- create or delete room aliases
+- publish or unpublish rooms in the room directory
 - join rooms
 - send messages
 - reply to messages
@@ -42,7 +49,7 @@ Important constraints:
 - The server acts as exactly one Matrix account.
 - It can only read what that account can read.
 - Write operations are available only if you enable the corresponding scopes.
-- Homeserver permissions still apply. For example, enabling `rooms.create` does not bypass a homeserver policy that disallows room creation for that account.
+- Homeserver permissions still apply. For example, enabling `rooms.create` or `rooms.directory.write` does not bypass a homeserver policy that disallows those actions for that account.
 - If your homeserver requires a registration token for account creation, configure it when starting `matrix-mcp`; the user-creation tool does not accept it per call.
 
 Use a dedicated bot or service account unless you have a specific reason not to.
@@ -150,7 +157,7 @@ export MATRIX_HOMESERVER_URL='https://matrix.example.com'
 export MATRIX_USERNAME='matrix-bot'
 export MATRIX_PASSWORD='replace-me'
 export MATRIX_MCP_LISTEN_ADDR='127.0.0.1:8080'
-export MATRIX_MCP_SCOPES='default,users.create,rooms.create,rooms.join,messages.send,messages.reply,messages.edit,messages.react,messages.redact'
+export MATRIX_MCP_SCOPES='default,rooms.alias.read,rooms.directory.read,users.create,rooms.create,rooms.alias.write,rooms.directory.write,rooms.join,messages.send,messages.reply,messages.edit,messages.react,messages.redact'
 
 go run ./cmd/matrix-mcp-go-server
 ```
@@ -168,10 +175,17 @@ If `MATRIX_MCP_SCOPES` is empty or unset, the server enables this default set:
 - `room.state.read`
 - `timeline.read`
 
-Additional scopes unlock mutations:
+Additional optional read scopes unlock room alias and room-directory inspection:
+
+- `rooms.alias.read`
+- `rooms.directory.read`
+
+Additional write scopes unlock mutations:
 
 - `users.create`
 - `rooms.create`
+- `rooms.alias.write`
+- `rooms.directory.write`
 - `rooms.join`
 - `messages.send`
 - `messages.reply`
@@ -183,7 +197,8 @@ Additional scopes unlock mutations:
 
 - `default`
 - `default,messages.send`
-- `default,rooms.create,rooms.join,messages.send`
+- `default,rooms.alias.read,rooms.directory.read`
+- `default,rooms.create,rooms.alias.write,rooms.directory.write,rooms.join,messages.send`
 
 If you want a read-only deployment, leave `MATRIX_MCP_SCOPES` unset.
 
@@ -192,8 +207,9 @@ If you want a read-only deployment, leave `MATRIX_MCP_SCOPES` unset.
 Reasonable starting points:
 
 - Read-only assistant: `default`
+- Read-only assistant that can inspect aliases and room-directory visibility: `default,rooms.alias.read,rooms.directory.read`
 - Messaging bot in existing rooms: `default,messages.send,messages.reply,messages.edit,messages.react`
-- Room-management bot: `default,rooms.create,rooms.join,messages.send`
+- Room-management bot: `default,rooms.alias.read,rooms.directory.read,rooms.create,rooms.alias.write,rooms.directory.write,rooms.join,messages.send`
 - Provisioning workflow that can create accounts: `default,users.create`
 
 Avoid granting write scopes just because they exist. The point of the scope model is to make the MCP surface smaller and safer than "full Matrix client access."
@@ -205,7 +221,7 @@ The server currently exposes tools under these module groups:
 - `client`: who the server is logged in as, and whether that session is active
 - `server`: homeserver versions and capability metadata
 - `users`: username availability, directory search, profile lookup, and optional user creation
-- `rooms`: list joined rooms, inspect a room, preview a room, and optionally create or join rooms
+- `rooms`: list joined rooms, inspect or preview a room, and, when the corresponding scopes are enabled, resolve or manage room aliases, inspect or manage room-directory visibility, and create or join rooms
 - `room.members`: list or fetch joined members in a room
 - `room.state`: fetch one state event or list visible state in a room
 - `timeline`: paginate messages, fetch an event, inspect context around an event, list relations such as reactions or edits

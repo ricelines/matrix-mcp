@@ -27,6 +27,8 @@ type fakeMatrix struct {
 	rooms             []matrixclient.RoomSummary
 	roomByID          map[string]matrixclient.RoomSummary
 	roomPreviewByKey  map[string]matrixclient.RoomSummary
+	roomAliasByAlias  map[string]matrixclient.RoomAliasResult
+	roomDirectoryByID map[string]matrixclient.RoomDirectoryVisibilityResult
 	membersByRoom     map[string][]matrixclient.MemberInfo
 	stateEventsByRoom map[string][]matrixclient.EventSummary
 	eventByKey        map[string]matrixclient.EventSummary
@@ -42,6 +44,10 @@ type fakeMatrix struct {
 	lastCreateUser    matrixclient.CreateUserRequest
 	lastCreateRoom    matrixclient.CreateRoomRequest
 	lastJoinRoom      matrixclient.JoinRoomRequest
+	lastCreateAlias   matrixclient.CreateRoomAliasRequest
+	lastDeleteAlias   string
+	lastDirectoryGet  string
+	lastDirectorySet  matrixclient.SetRoomDirectoryVisibilityRequest
 	lastSendText      matrixclient.SendTextRequest
 	lastReplyText     matrixclient.ReplyTextRequest
 	lastEditText      matrixclient.EditTextRequest
@@ -182,6 +188,33 @@ func (f *fakeMatrix) JoinRoom(ctx context.Context, req matrixclient.JoinRoomRequ
 	f.lastJoinRoom = req
 	return f.joinedRoom, nil
 }
+func (f *fakeMatrix) CreateRoomAlias(ctx context.Context, req matrixclient.CreateRoomAliasRequest) (matrixclient.CreateRoomAliasResult, error) {
+	f.lastCreateAlias = req
+	return matrixclient.CreateRoomAliasResult{RoomAlias: req.RoomAlias, RoomID: req.RoomID}, nil
+}
+func (f *fakeMatrix) GetRoomAlias(ctx context.Context, roomAlias string) (matrixclient.RoomAliasResult, error) {
+	result, ok := f.roomAliasByAlias[roomAlias]
+	if !ok {
+		return matrixclient.RoomAliasResult{}, errors.New("not found")
+	}
+	return result, nil
+}
+func (f *fakeMatrix) DeleteRoomAlias(ctx context.Context, roomAlias string) (matrixclient.DeleteRoomAliasResult, error) {
+	f.lastDeleteAlias = roomAlias
+	return matrixclient.DeleteRoomAliasResult{RoomAlias: roomAlias}, nil
+}
+func (f *fakeMatrix) GetRoomDirectoryVisibility(ctx context.Context, roomID string) (matrixclient.RoomDirectoryVisibilityResult, error) {
+	f.lastDirectoryGet = roomID
+	result, ok := f.roomDirectoryByID[roomID]
+	if !ok {
+		return matrixclient.RoomDirectoryVisibilityResult{}, errors.New("not found")
+	}
+	return result, nil
+}
+func (f *fakeMatrix) SetRoomDirectoryVisibility(ctx context.Context, req matrixclient.SetRoomDirectoryVisibilityRequest) (matrixclient.RoomDirectoryVisibilityResult, error) {
+	f.lastDirectorySet = req
+	return matrixclient.RoomDirectoryVisibilityResult{RoomID: req.RoomID, Visibility: req.Visibility}, nil
+}
 func (f *fakeMatrix) SendText(ctx context.Context, req matrixclient.SendTextRequest) (matrixclient.EventWriteResult, error) {
 	f.lastSendText = req
 	return f.sentMessage, nil
@@ -257,11 +290,48 @@ func TestScopeFiltering(t *testing.T) {
 	if !seen["matrix.v1.timeline.messages.list"] {
 		t.Fatal("timeline read tool missing from default scope set")
 	}
+	if seen["matrix.v1.rooms.alias.get"] || seen["matrix.v1.rooms.directory.get"] {
+		t.Fatal("room alias/directory read tools should not be available without their read scopes")
+	}
 	if seen["matrix.v1.users.create"] {
 		t.Fatal("users.create should not be available without users.create scope")
 	}
 	if seen["matrix.v1.messages.send_text"] {
 		t.Fatal("messages.send_text should not be available without messages.send scope")
+	}
+	if seen["matrix.v1.rooms.alias.create"] || seen["matrix.v1.rooms.directory.publish"] {
+		t.Fatal("room alias/directory write tools should not be available without their write scopes")
+	}
+}
+
+func TestAliasAndDirectoryScopeFiltering(t *testing.T) {
+	backend := &fakeMatrix{}
+	active, err := scopes.Parse("default,rooms.alias.read,rooms.alias.write,rooms.directory.read,rooms.directory.write")
+	if err != nil {
+		t.Fatalf("Parse() error = %v", err)
+	}
+	server := New(backend, active)
+	session := connectTestSession(t, server)
+
+	tools, err := session.ListTools(context.Background(), nil)
+	if err != nil {
+		t.Fatalf("ListTools() error = %v", err)
+	}
+	seen := map[string]bool{}
+	for _, tool := range tools.Tools {
+		seen[tool.Name] = true
+	}
+	if !seen["matrix.v1.rooms.alias.get"] || !seen["matrix.v1.rooms.directory.get"] {
+		t.Fatal("room alias/directory read tools missing despite explicit read scopes")
+	}
+	if !seen["matrix.v1.rooms.alias.create"] || !seen["matrix.v1.rooms.alias.delete"] {
+		t.Fatal("room alias write tools missing despite explicit alias write scope")
+	}
+	if !seen["matrix.v1.rooms.directory.publish"] || !seen["matrix.v1.rooms.directory.unpublish"] {
+		t.Fatal("room directory write tools missing despite explicit directory write scope")
+	}
+	if seen["matrix.v1.rooms.create"] {
+		t.Fatal("rooms.create should not be available without rooms.create scope")
 	}
 }
 
@@ -641,6 +711,80 @@ func TestRoomReadAndWriteTools(t *testing.T) {
 	}
 	if structuredMap(t, joined)["room_id"] != "!joined:example.com" || backend.lastJoinRoom.RoomIDOrAlias != "#public:example.com" {
 		t.Fatalf("unexpected rooms.join payload / request = %#v / %#v", structuredMap(t, joined), backend.lastJoinRoom)
+	}
+}
+
+func TestRoomAliasAndDirectoryTools(t *testing.T) {
+	active, err := scopes.Parse("default,rooms.alias.read,rooms.alias.write,rooms.directory.read,rooms.directory.write")
+	if err != nil {
+		t.Fatalf("Parse() error = %v", err)
+	}
+	backend := &fakeMatrix{
+		roomAliasByAlias: map[string]matrixclient.RoomAliasResult{
+			"#welcome:example.com": {
+				RoomAlias: "#welcome:example.com",
+				RoomID:    "!joined:example.com",
+				Servers:   []string{"backup.example.com", "example.com"},
+			},
+		},
+		roomDirectoryByID: map[string]matrixclient.RoomDirectoryVisibilityResult{
+			"!joined:example.com": {RoomID: "!joined:example.com", Visibility: matrixclient.RoomDirectoryVisibilityPrivate},
+		},
+	}
+	server := New(backend, active)
+	session := connectTestSession(t, server)
+	ctx := context.Background()
+
+	alias, err := session.CallTool(ctx, &mcp.CallToolParams{Name: "matrix.v1.rooms.alias.get", Arguments: map[string]any{"room_alias": "#welcome:example.com"}})
+	if err != nil {
+		t.Fatalf("rooms.alias.get error = %v", err)
+	}
+	aliasPayload := structuredMap(t, alias)
+	if aliasPayload["room_id"] != "!joined:example.com" {
+		t.Fatalf("unexpected rooms.alias.get payload = %#v", aliasPayload)
+	}
+	if len(aliasPayload["servers"].([]any)) != 2 {
+		t.Fatalf("unexpected rooms.alias.get servers = %#v", aliasPayload)
+	}
+
+	directory, err := session.CallTool(ctx, &mcp.CallToolParams{Name: "matrix.v1.rooms.directory.get", Arguments: map[string]any{"room_id": "!joined:example.com"}})
+	if err != nil {
+		t.Fatalf("rooms.directory.get error = %v", err)
+	}
+	if structuredMap(t, directory)["visibility"] != matrixclient.RoomDirectoryVisibilityPrivate || backend.lastDirectoryGet != "!joined:example.com" {
+		t.Fatalf("unexpected rooms.directory.get payload / request = %#v / %q", structuredMap(t, directory), backend.lastDirectoryGet)
+	}
+
+	createdAlias, err := session.CallTool(ctx, &mcp.CallToolParams{Name: "matrix.v1.rooms.alias.create", Arguments: map[string]any{"room_alias": "#welcome:example.com", "room_id": "!joined:example.com"}})
+	if err != nil {
+		t.Fatalf("rooms.alias.create error = %v", err)
+	}
+	if structuredMap(t, createdAlias)["room_id"] != "!joined:example.com" || backend.lastCreateAlias.RoomAlias != "#welcome:example.com" {
+		t.Fatalf("unexpected rooms.alias.create payload / request = %#v / %#v", structuredMap(t, createdAlias), backend.lastCreateAlias)
+	}
+
+	deletedAlias, err := session.CallTool(ctx, &mcp.CallToolParams{Name: "matrix.v1.rooms.alias.delete", Arguments: map[string]any{"room_alias": "#welcome:example.com"}})
+	if err != nil {
+		t.Fatalf("rooms.alias.delete error = %v", err)
+	}
+	if structuredMap(t, deletedAlias)["room_alias"] != "#welcome:example.com" || backend.lastDeleteAlias != "#welcome:example.com" {
+		t.Fatalf("unexpected rooms.alias.delete payload / request = %#v / %q", structuredMap(t, deletedAlias), backend.lastDeleteAlias)
+	}
+
+	published, err := session.CallTool(ctx, &mcp.CallToolParams{Name: "matrix.v1.rooms.directory.publish", Arguments: map[string]any{"room_id": "!joined:example.com"}})
+	if err != nil {
+		t.Fatalf("rooms.directory.publish error = %v", err)
+	}
+	if structuredMap(t, published)["visibility"] != matrixclient.RoomDirectoryVisibilityPublic || backend.lastDirectorySet.Visibility != matrixclient.RoomDirectoryVisibilityPublic {
+		t.Fatalf("unexpected rooms.directory.publish payload / request = %#v / %#v", structuredMap(t, published), backend.lastDirectorySet)
+	}
+
+	unpublished, err := session.CallTool(ctx, &mcp.CallToolParams{Name: "matrix.v1.rooms.directory.unpublish", Arguments: map[string]any{"room_id": "!joined:example.com"}})
+	if err != nil {
+		t.Fatalf("rooms.directory.unpublish error = %v", err)
+	}
+	if structuredMap(t, unpublished)["visibility"] != matrixclient.RoomDirectoryVisibilityPrivate || backend.lastDirectorySet.Visibility != matrixclient.RoomDirectoryVisibilityPrivate {
+		t.Fatalf("unexpected rooms.directory.unpublish payload / request = %#v / %#v", structuredMap(t, unpublished), backend.lastDirectorySet)
 	}
 }
 

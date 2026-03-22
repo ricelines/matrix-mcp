@@ -3,13 +3,13 @@ module github.com/ricelines/chat/matrix-mcp-go
 go 1.25.0
 
 require (
+	github.com/google/jsonschema-go v0.3.0
 	github.com/modelcontextprotocol/go-sdk v1.1.0
 	maunium.net/go/mautrix v0.26.3
 )
 
 require (
 	filippo.io/edwards25519 v1.1.0 // indirect
-	github.com/google/jsonschema-go v0.3.0 // indirect
 	github.com/mattn/go-colorable v0.1.14 // indirect
 	github.com/mattn/go-isatty v0.0.20 // indirect
 	github.com/rs/zerolog v1.34.0 // indirect

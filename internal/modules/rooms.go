@@ -28,6 +28,32 @@ type roomSummaryOutput struct {
 	Room matrixclient.RoomSummary `json:"room"`
 }
 
+type roomAliasInput struct {
+	RoomAlias string `json:"room_alias" jsonschema:"Matrix room alias to resolve or delete, for example #welcome:example.com"`
+}
+
+type roomAliasCreateInput struct {
+	RoomAlias string `json:"room_alias" jsonschema:"Matrix room alias to create, for example #welcome:example.com"`
+	RoomID    string `json:"room_id" jsonschema:"Matrix room ID the alias should resolve to"`
+}
+
+type roomAliasOutput struct {
+	BaseResult
+	RoomAlias string   `json:"room_alias" jsonschema:"Matrix room alias"`
+	RoomID    string   `json:"room_id,omitempty" jsonschema:"Matrix room ID the alias resolves to"`
+	Servers   []string `json:"servers,omitempty" jsonschema:"Candidate servers returned by alias resolution"`
+}
+
+type roomDirectoryInput struct {
+	RoomID string `json:"room_id" jsonschema:"Matrix room ID whose room-directory visibility should be inspected or changed"`
+}
+
+type roomDirectoryOutput struct {
+	BaseResult
+	RoomID     string `json:"room_id" jsonschema:"Matrix room ID"`
+	Visibility string `json:"visibility" jsonschema:"Room-directory visibility, usually public or private"`
+}
+
 type createRoomInput struct {
 	Name     string   `json:"name,omitempty" jsonschema:"Optional room name"`
 	Topic    string   `json:"topic,omitempty" jsonschema:"Optional room topic"`
@@ -53,7 +79,7 @@ type joinRoomOutput struct {
 }
 
 func RegisterRooms(r *catalog.Registrar, deps Dependencies, active scopes.Set) {
-	r.AddModule("rooms", "Room discovery, inspection, creation, and join actions.")
+	r.AddModule("rooms", "Room discovery, inspection, alias, directory, creation, and join actions.")
 
 	if active.Allows(scopes.ScopeRoomsRead) {
 		catalog.AddTool(r, "rooms", scopes.ScopeRoomsRead, &mcp.Tool{
@@ -96,6 +122,47 @@ func RegisterRooms(r *catalog.Registrar, deps Dependencies, active scopes.Set) {
 		})
 	}
 
+	if active.Allows(scopes.ScopeRoomsAliasRead) {
+		catalog.AddTool(r, "rooms", scopes.ScopeRoomsAliasRead, &mcp.Tool{
+			Name:        "matrix.v1.rooms.alias.get",
+			Description: "Resolve a room alias to its room ID and candidate routing servers.",
+		}, func(ctx context.Context, req *mcp.CallToolRequest, input roomAliasInput) (*mcp.CallToolResult, roomAliasOutput, error) {
+			if err := requireNonEmpty("room_alias", input.RoomAlias); err != nil {
+				return nil, roomAliasOutput{}, err
+			}
+			result, err := deps.Matrix.GetRoomAlias(ctx, input.RoomAlias)
+			if err != nil {
+				return nil, roomAliasOutput{}, err
+			}
+			return nil, roomAliasOutput{
+				BaseResult: deps.baseResult(),
+				RoomAlias:  result.RoomAlias,
+				RoomID:     result.RoomID,
+				Servers:    result.Servers,
+			}, nil
+		})
+	}
+
+	if active.Allows(scopes.ScopeRoomsDirectoryRead) {
+		catalog.AddTool(r, "rooms", scopes.ScopeRoomsDirectoryRead, &mcp.Tool{
+			Name:        "matrix.v1.rooms.directory.get",
+			Description: "Read whether a room is published in the room directory or hidden from it.",
+		}, func(ctx context.Context, req *mcp.CallToolRequest, input roomDirectoryInput) (*mcp.CallToolResult, roomDirectoryOutput, error) {
+			if err := requireNonEmpty("room_id", input.RoomID); err != nil {
+				return nil, roomDirectoryOutput{}, err
+			}
+			result, err := deps.Matrix.GetRoomDirectoryVisibility(ctx, input.RoomID)
+			if err != nil {
+				return nil, roomDirectoryOutput{}, err
+			}
+			return nil, roomDirectoryOutput{
+				BaseResult: deps.baseResult(),
+				RoomID:     result.RoomID,
+				Visibility: result.Visibility,
+			}, nil
+		})
+	}
+
 	if active.Allows(scopes.ScopeRoomsCreate) {
 		catalog.AddTool(r, "rooms", scopes.ScopeRoomsCreate, &mcp.Tool{
 			Name:        "matrix.v1.rooms.create",
@@ -112,6 +179,93 @@ func RegisterRooms(r *catalog.Registrar, deps Dependencies, active scopes.Set) {
 				return nil, createRoomOutput{}, err
 			}
 			return nil, createRoomOutput{BaseResult: deps.baseResult(), RoomID: result.RoomID}, nil
+		})
+	}
+
+	if active.Allows(scopes.ScopeRoomsAliasWrite) {
+		catalog.AddTool(r, "rooms", scopes.ScopeRoomsAliasWrite, &mcp.Tool{
+			Name:        "matrix.v1.rooms.alias.create",
+			Description: "Create a room alias that points at an existing room.",
+		}, func(ctx context.Context, req *mcp.CallToolRequest, input roomAliasCreateInput) (*mcp.CallToolResult, roomAliasOutput, error) {
+			if err := requireNonEmpty("room_alias", input.RoomAlias); err != nil {
+				return nil, roomAliasOutput{}, err
+			}
+			if err := requireNonEmpty("room_id", input.RoomID); err != nil {
+				return nil, roomAliasOutput{}, err
+			}
+			result, err := deps.Matrix.CreateRoomAlias(ctx, matrixclient.CreateRoomAliasRequest{
+				RoomAlias: input.RoomAlias,
+				RoomID:    input.RoomID,
+			})
+			if err != nil {
+				return nil, roomAliasOutput{}, err
+			}
+			return nil, roomAliasOutput{
+				BaseResult: deps.baseResult(),
+				RoomAlias:  result.RoomAlias,
+				RoomID:     result.RoomID,
+			}, nil
+		})
+
+		catalog.AddTool(r, "rooms", scopes.ScopeRoomsAliasWrite, &mcp.Tool{
+			Name:        "matrix.v1.rooms.alias.delete",
+			Description: "Delete a room alias.",
+		}, func(ctx context.Context, req *mcp.CallToolRequest, input roomAliasInput) (*mcp.CallToolResult, roomAliasOutput, error) {
+			if err := requireNonEmpty("room_alias", input.RoomAlias); err != nil {
+				return nil, roomAliasOutput{}, err
+			}
+			result, err := deps.Matrix.DeleteRoomAlias(ctx, input.RoomAlias)
+			if err != nil {
+				return nil, roomAliasOutput{}, err
+			}
+			return nil, roomAliasOutput{
+				BaseResult: deps.baseResult(),
+				RoomAlias:  result.RoomAlias,
+			}, nil
+		})
+	}
+
+	if active.Allows(scopes.ScopeRoomsDirectoryWrite) {
+		catalog.AddTool(r, "rooms", scopes.ScopeRoomsDirectoryWrite, &mcp.Tool{
+			Name:        "matrix.v1.rooms.directory.publish",
+			Description: "Publish a room into the homeserver room directory.",
+		}, func(ctx context.Context, req *mcp.CallToolRequest, input roomDirectoryInput) (*mcp.CallToolResult, roomDirectoryOutput, error) {
+			if err := requireNonEmpty("room_id", input.RoomID); err != nil {
+				return nil, roomDirectoryOutput{}, err
+			}
+			result, err := deps.Matrix.SetRoomDirectoryVisibility(ctx, matrixclient.SetRoomDirectoryVisibilityRequest{
+				RoomID:     input.RoomID,
+				Visibility: matrixclient.RoomDirectoryVisibilityPublic,
+			})
+			if err != nil {
+				return nil, roomDirectoryOutput{}, err
+			}
+			return nil, roomDirectoryOutput{
+				BaseResult: deps.baseResult(),
+				RoomID:     result.RoomID,
+				Visibility: result.Visibility,
+			}, nil
+		})
+
+		catalog.AddTool(r, "rooms", scopes.ScopeRoomsDirectoryWrite, &mcp.Tool{
+			Name:        "matrix.v1.rooms.directory.unpublish",
+			Description: "Hide a room from the homeserver room directory.",
+		}, func(ctx context.Context, req *mcp.CallToolRequest, input roomDirectoryInput) (*mcp.CallToolResult, roomDirectoryOutput, error) {
+			if err := requireNonEmpty("room_id", input.RoomID); err != nil {
+				return nil, roomDirectoryOutput{}, err
+			}
+			result, err := deps.Matrix.SetRoomDirectoryVisibility(ctx, matrixclient.SetRoomDirectoryVisibilityRequest{
+				RoomID:     input.RoomID,
+				Visibility: matrixclient.RoomDirectoryVisibilityPrivate,
+			})
+			if err != nil {
+				return nil, roomDirectoryOutput{}, err
+			}
+			return nil, roomDirectoryOutput{
+				BaseResult: deps.baseResult(),
+				RoomID:     result.RoomID,
+				Visibility: result.Visibility,
+			}, nil
 		})
 	}
 

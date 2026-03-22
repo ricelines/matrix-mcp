@@ -3,10 +3,12 @@ package integration
 import (
 	"context"
 	"encoding/json"
+	"net/http"
 	"strings"
 	"testing"
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
+	matrixclient "github.com/ricelines/chat/matrix-mcp-go/internal/matrix"
 	"maunium.net/go/mautrix"
 	"maunium.net/go/mautrix/id"
 )
@@ -279,6 +281,74 @@ func TestPublicRoomCreationAgainstTuwunel(t *testing.T) {
 	}
 }
 
+func TestRoomAliasAndDirectoryAgainstTuwunel(t *testing.T) {
+	ctx := integrationContext(t)
+	hs := integrationHomeserver(t)
+	botUsername, botPassword := registerUser(t, ctx, hs, "matrixmcpbot")
+	session := newSession(t, ctx, hs, botUsername, botPassword, "default,rooms.alias.read,rooms.alias.write,rooms.directory.read,rooms.directory.write")
+
+	botClient, err := hs.LoginClient(ctx, botUsername, botPassword)
+	if err != nil {
+		t.Fatalf("login bot user: %v", err)
+	}
+
+	room, err := botClient.CreateRoom(ctx, &mautrix.ReqCreateRoom{
+		Name:       "Alias Directory Coverage",
+		Visibility: "private",
+		Preset:     "private_chat",
+	})
+	if err != nil {
+		t.Fatalf("bot create room: %v", err)
+	}
+	roomID := room.RoomID.String()
+	roomAlias := "#" + nextUsername("matrixmcpalias") + ":localhost"
+
+	createdAlias := callToolMap(t, ctx, session, "matrix.v1.rooms.alias.create", map[string]any{
+		"room_alias": roomAlias,
+		"room_id":    roomID,
+	})
+	if createdAlias["room_alias"] != roomAlias || createdAlias["room_id"] != roomID {
+		t.Fatalf("rooms.alias.create payload = %#v", createdAlias)
+	}
+
+	resolvedAlias := callToolMap(t, ctx, session, "matrix.v1.rooms.alias.get", map[string]any{"room_alias": roomAlias})
+	if resolvedAlias["room_id"] != roomID {
+		t.Fatalf("rooms.alias.get payload = %#v", resolvedAlias)
+	}
+	if _, err := botClient.ResolveAlias(ctx, id.RoomAlias(roomAlias)); err != nil {
+		t.Fatalf("ResolveAlias(created alias) error = %v", err)
+	}
+
+	published := callToolMap(t, ctx, session, "matrix.v1.rooms.directory.publish", map[string]any{"room_id": roomID})
+	if published["visibility"] != matrixclient.RoomDirectoryVisibilityPublic {
+		t.Fatalf("rooms.directory.publish payload = %#v", published)
+	}
+	if got := roomDirectoryVisibility(t, ctx, botClient, roomID); got != matrixclient.RoomDirectoryVisibilityPublic {
+		t.Fatalf("room directory visibility after publish = %q", got)
+	}
+
+	directory := callToolMap(t, ctx, session, "matrix.v1.rooms.directory.get", map[string]any{"room_id": roomID})
+	if directory["visibility"] != matrixclient.RoomDirectoryVisibilityPublic {
+		t.Fatalf("rooms.directory.get payload after publish = %#v", directory)
+	}
+
+	unpublished := callToolMap(t, ctx, session, "matrix.v1.rooms.directory.unpublish", map[string]any{"room_id": roomID})
+	if unpublished["visibility"] != matrixclient.RoomDirectoryVisibilityPrivate {
+		t.Fatalf("rooms.directory.unpublish payload = %#v", unpublished)
+	}
+	if got := roomDirectoryVisibility(t, ctx, botClient, roomID); got != matrixclient.RoomDirectoryVisibilityPrivate {
+		t.Fatalf("room directory visibility after unpublish = %q", got)
+	}
+
+	deletedAlias := callToolMap(t, ctx, session, "matrix.v1.rooms.alias.delete", map[string]any{"room_alias": roomAlias})
+	if deletedAlias["room_alias"] != roomAlias {
+		t.Fatalf("rooms.alias.delete payload = %#v", deletedAlias)
+	}
+	if _, err := botClient.ResolveAlias(ctx, id.RoomAlias(roomAlias)); err == nil {
+		t.Fatal("ResolveAlias(deleted alias) unexpectedly succeeded")
+	}
+}
+
 func TestTimelinePaginationAgainstTuwunel(t *testing.T) {
 	ctx := integrationContext(t)
 	hs := integrationHomeserver(t)
@@ -426,4 +496,17 @@ func containsEventID(eventIDs []string, eventID string) bool {
 		}
 	}
 	return false
+}
+
+func roomDirectoryVisibility(t *testing.T, ctx context.Context, client *mautrix.Client, roomID string) string {
+	t.Helper()
+
+	var response struct {
+		Visibility string `json:"visibility"`
+	}
+	urlPath := client.BuildClientURL("v3", "directory", "list", "room", id.RoomID(roomID))
+	if _, err := client.MakeRequest(ctx, http.MethodGet, urlPath, nil, &response); err != nil {
+		t.Fatalf("get room directory visibility: %v", err)
+	}
+	return response.Visibility
 }

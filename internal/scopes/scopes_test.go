@@ -18,6 +18,25 @@ func TestParseDefaultExpansion(t *testing.T) {
 			t.Fatalf("expected default scope %q to be enabled", scope)
 		}
 	}
+	if parsed.Allows(ScopeRoomsAliasRead) || parsed.Allows(ScopeRoomsDirectoryRead) {
+		t.Fatal("default scopes should not enable alias or directory reads")
+	}
+	if parsed.Allows(ScopeRoomsAliasWrite) || parsed.Allows(ScopeRoomsDirectoryWrite) {
+		t.Fatal("default scopes should not enable alias or directory writes")
+	}
+}
+
+func TestParseAllowsAliasAndDirectoryScopes(t *testing.T) {
+	parsed, err := Parse("default,rooms.alias.read,rooms.alias.write,rooms.directory.read,rooms.directory.write")
+	if err != nil {
+		t.Fatalf("Parse() error = %v", err)
+	}
+	if !parsed.Allows(ScopeRoomsAliasRead) || !parsed.Allows(ScopeRoomsDirectoryRead) {
+		t.Fatal("expected alias and directory read scopes to be enabled")
+	}
+	if !parsed.Allows(ScopeRoomsAliasWrite) || !parsed.Allows(ScopeRoomsDirectoryWrite) {
+		t.Fatal("expected alias and directory write scopes to be enabled")
+	}
 }
 
 func TestParseRejectsUnknownScope(t *testing.T) {

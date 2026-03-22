@@ -14,22 +14,26 @@ type Info struct {
 }
 
 const (
-	ScopeClientIdentityRead Scope = "client.identity.read"
-	ScopeClientStatusRead   Scope = "client.status.read"
-	ScopeServerRead         Scope = "server.read"
-	ScopeUsersRead          Scope = "users.read"
-	ScopeUsersCreate        Scope = "users.create"
-	ScopeRoomsRead          Scope = "rooms.read"
-	ScopeRoomsCreate        Scope = "rooms.create"
-	ScopeRoomsJoin          Scope = "rooms.join"
-	ScopeRoomMembersRead    Scope = "room.members.read"
-	ScopeRoomStateRead      Scope = "room.state.read"
-	ScopeTimelineRead       Scope = "timeline.read"
-	ScopeMessagesSend       Scope = "messages.send"
-	ScopeMessagesReply      Scope = "messages.reply"
-	ScopeMessagesEdit       Scope = "messages.edit"
-	ScopeMessagesReact      Scope = "messages.react"
-	ScopeMessagesRedact     Scope = "messages.redact"
+	ScopeClientIdentityRead  Scope = "client.identity.read"
+	ScopeClientStatusRead    Scope = "client.status.read"
+	ScopeServerRead          Scope = "server.read"
+	ScopeUsersRead           Scope = "users.read"
+	ScopeUsersCreate         Scope = "users.create"
+	ScopeRoomsRead           Scope = "rooms.read"
+	ScopeRoomsAliasRead      Scope = "rooms.alias.read"
+	ScopeRoomsDirectoryRead  Scope = "rooms.directory.read"
+	ScopeRoomsCreate         Scope = "rooms.create"
+	ScopeRoomsAliasWrite     Scope = "rooms.alias.write"
+	ScopeRoomsDirectoryWrite Scope = "rooms.directory.write"
+	ScopeRoomsJoin           Scope = "rooms.join"
+	ScopeRoomMembersRead     Scope = "room.members.read"
+	ScopeRoomStateRead       Scope = "room.state.read"
+	ScopeTimelineRead        Scope = "timeline.read"
+	ScopeMessagesSend        Scope = "messages.send"
+	ScopeMessagesReply       Scope = "messages.reply"
+	ScopeMessagesEdit        Scope = "messages.edit"
+	ScopeMessagesReact       Scope = "messages.react"
+	ScopeMessagesRedact      Scope = "messages.redact"
 )
 
 var defaultScopes = []Scope{
@@ -49,8 +53,12 @@ var allScopes = []Info{
 	{Name: ScopeServerRead, Description: "Read homeserver versions, capabilities, and feature metadata."},
 	{Name: ScopeUsersRead, Description: "Search users, inspect profiles, and check username availability."},
 	{Name: ScopeUsersCreate, Description: "Create new users through the homeserver registration API."},
-	{Name: ScopeRoomsRead, Description: "List joined rooms and inspect room summaries."},
+	{Name: ScopeRoomsRead, Description: "List joined rooms and inspect or preview room summaries."},
+	{Name: ScopeRoomsAliasRead, Description: "Resolve room aliases to room IDs and routing servers."},
+	{Name: ScopeRoomsDirectoryRead, Description: "Inspect room-directory visibility for rooms."},
 	{Name: ScopeRoomsCreate, Description: "Create new rooms."},
+	{Name: ScopeRoomsAliasWrite, Description: "Create and delete room aliases."},
+	{Name: ScopeRoomsDirectoryWrite, Description: "Publish and unpublish rooms in the room directory."},
 	{Name: ScopeRoomsJoin, Description: "Join rooms by room ID or alias."},
 	{Name: ScopeRoomMembersRead, Description: "Read joined-member information for a room."},
 	{Name: ScopeRoomStateRead, Description: "Read room state events."},

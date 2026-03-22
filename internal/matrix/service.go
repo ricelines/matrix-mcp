@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"net/http"
 	"sort"
 	"strings"
 
@@ -17,6 +18,11 @@ import (
 )
 
 const registrationTokenAuthType = mautrix.AuthType("m.login.registration_token")
+
+const (
+	RoomDirectoryVisibilityPrivate = "private"
+	RoomDirectoryVisibilityPublic  = "public"
+)
 
 type Identity struct {
 	UserID        string
@@ -110,6 +116,40 @@ type JoinRoomRequest struct {
 
 type JoinRoomResult struct {
 	RoomID string `json:"room_id"`
+}
+
+type CreateRoomAliasRequest struct {
+	RoomAlias string
+	RoomID    string
+}
+
+type CreateRoomAliasResult struct {
+	RoomAlias string `json:"room_alias"`
+	RoomID    string `json:"room_id"`
+}
+
+type RoomAliasResult struct {
+	RoomAlias string   `json:"room_alias"`
+	RoomID    string   `json:"room_id"`
+	Servers   []string `json:"servers,omitempty"`
+}
+
+type DeleteRoomAliasResult struct {
+	RoomAlias string `json:"room_alias"`
+}
+
+type SetRoomDirectoryVisibilityRequest struct {
+	RoomID     string
+	Visibility string
+}
+
+type RoomDirectoryVisibilityResult struct {
+	RoomID     string `json:"room_id"`
+	Visibility string `json:"visibility"`
+}
+
+type roomDirectoryVisibilityPayload struct {
+	Visibility string `json:"visibility"`
 }
 
 type SendTextRequest struct {
@@ -213,6 +253,11 @@ type API interface {
 	ListRelations(context.Context, ListRelationsRequest) (RelationsResult, error)
 	CreateRoom(context.Context, CreateRoomRequest) (CreateRoomResult, error)
 	JoinRoom(context.Context, JoinRoomRequest) (JoinRoomResult, error)
+	CreateRoomAlias(context.Context, CreateRoomAliasRequest) (CreateRoomAliasResult, error)
+	GetRoomAlias(context.Context, string) (RoomAliasResult, error)
+	DeleteRoomAlias(context.Context, string) (DeleteRoomAliasResult, error)
+	GetRoomDirectoryVisibility(context.Context, string) (RoomDirectoryVisibilityResult, error)
+	SetRoomDirectoryVisibility(context.Context, SetRoomDirectoryVisibilityRequest) (RoomDirectoryVisibilityResult, error)
 	SendText(context.Context, SendTextRequest) (EventWriteResult, error)
 	ReplyText(context.Context, ReplyTextRequest) (EventWriteResult, error)
 	EditText(context.Context, EditTextRequest) (EventWriteResult, error)
@@ -616,6 +661,67 @@ func (s *Service) JoinRoom(ctx context.Context, req JoinRoomRequest) (JoinRoomRe
 		return JoinRoomResult{}, fmt.Errorf("join room: %w", err)
 	}
 	return JoinRoomResult{RoomID: resp.RoomID.String()}, nil
+}
+
+func (s *Service) CreateRoomAlias(ctx context.Context, req CreateRoomAliasRequest) (CreateRoomAliasResult, error) {
+	_, err := s.client.CreateAlias(ctx, id.RoomAlias(req.RoomAlias), id.RoomID(req.RoomID))
+	if err != nil {
+		return CreateRoomAliasResult{}, fmt.Errorf("create room alias: %w", err)
+	}
+	return CreateRoomAliasResult{RoomAlias: req.RoomAlias, RoomID: req.RoomID}, nil
+}
+
+func (s *Service) GetRoomAlias(ctx context.Context, roomAlias string) (RoomAliasResult, error) {
+	resp, err := s.client.ResolveAlias(ctx, id.RoomAlias(roomAlias))
+	if err != nil {
+		return RoomAliasResult{}, fmt.Errorf("resolve room alias: %w", err)
+	}
+	servers := make([]string, 0, len(resp.Servers))
+	for _, server := range resp.Servers {
+		servers = append(servers, server)
+	}
+	sort.Strings(servers)
+	return RoomAliasResult{
+		RoomAlias: roomAlias,
+		RoomID:    resp.RoomID.String(),
+		Servers:   servers,
+	}, nil
+}
+
+func (s *Service) DeleteRoomAlias(ctx context.Context, roomAlias string) (DeleteRoomAliasResult, error) {
+	_, err := s.client.DeleteAlias(ctx, id.RoomAlias(roomAlias))
+	if err != nil {
+		return DeleteRoomAliasResult{}, fmt.Errorf("delete room alias: %w", err)
+	}
+	return DeleteRoomAliasResult{RoomAlias: roomAlias}, nil
+}
+
+func (s *Service) GetRoomDirectoryVisibility(ctx context.Context, roomID string) (RoomDirectoryVisibilityResult, error) {
+	var resp roomDirectoryVisibilityPayload
+	if err := s.doRoomDirectoryVisibilityRequest(ctx, http.MethodGet, roomID, nil, &resp); err != nil {
+		return RoomDirectoryVisibilityResult{}, err
+	}
+	return RoomDirectoryVisibilityResult{RoomID: roomID, Visibility: resp.Visibility}, nil
+}
+
+func (s *Service) SetRoomDirectoryVisibility(ctx context.Context, req SetRoomDirectoryVisibilityRequest) (RoomDirectoryVisibilityResult, error) {
+	if err := s.doRoomDirectoryVisibilityRequest(ctx, http.MethodPut, req.RoomID, roomDirectoryVisibilityPayload{Visibility: req.Visibility}, &struct{}{}); err != nil {
+		return RoomDirectoryVisibilityResult{}, err
+	}
+	return RoomDirectoryVisibilityResult{RoomID: req.RoomID, Visibility: req.Visibility}, nil
+}
+
+func (s *Service) doRoomDirectoryVisibilityRequest(ctx context.Context, method string, roomID string, reqBody any, resBody any) error {
+	urlPath := s.client.BuildClientURL("v3", "directory", "list", "room", id.RoomID(roomID))
+	_, err := s.client.MakeRequest(ctx, method, urlPath, reqBody, resBody)
+	if err != nil {
+		action := "get"
+		if method == http.MethodPut {
+			action = "set"
+		}
+		return fmt.Errorf("%s room directory visibility: %w", action, err)
+	}
+	return nil
 }
 
 func (s *Service) SendText(ctx context.Context, req SendTextRequest) (EventWriteResult, error) {
