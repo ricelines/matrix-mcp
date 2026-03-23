@@ -7,9 +7,11 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"net"
 	"net/http"
 	"sort"
 	"strings"
+	"time"
 
 	"github.com/ricelines/chat/matrix-mcp-go/internal/config"
 	"maunium.net/go/mautrix"
@@ -22,6 +24,8 @@ const registrationTokenAuthType = mautrix.AuthType("m.login.registration_token")
 const (
 	RoomDirectoryVisibilityPrivate = "private"
 	RoomDirectoryVisibilityPublic  = "public"
+	loginRetryInterval             = 250 * time.Millisecond
+	loginRetryTimeout              = 15 * time.Second
 )
 
 type Identity struct {
@@ -115,6 +119,26 @@ type JoinRoomRequest struct {
 }
 
 type JoinRoomResult struct {
+	RoomID string `json:"room_id"`
+}
+
+type InviteRoomMemberRequest struct {
+	RoomID string
+	UserID string
+	Reason string
+}
+
+type InviteRoomMemberResult struct {
+	RoomID string `json:"room_id"`
+	UserID string `json:"user_id"`
+}
+
+type LeaveRoomRequest struct {
+	RoomID string
+	Reason string
+}
+
+type LeaveRoomResult struct {
 	RoomID string `json:"room_id"`
 }
 
@@ -253,6 +277,8 @@ type API interface {
 	ListRelations(context.Context, ListRelationsRequest) (RelationsResult, error)
 	CreateRoom(context.Context, CreateRoomRequest) (CreateRoomResult, error)
 	JoinRoom(context.Context, JoinRoomRequest) (JoinRoomResult, error)
+	InviteRoomMember(context.Context, InviteRoomMemberRequest) (InviteRoomMemberResult, error)
+	LeaveRoom(context.Context, LeaveRoomRequest) (LeaveRoomResult, error)
 	CreateRoomAlias(context.Context, CreateRoomAliasRequest) (CreateRoomAliasResult, error)
 	GetRoomAlias(context.Context, string) (RoomAliasResult, error)
 	DeleteRoomAlias(context.Context, string) (DeleteRoomAliasResult, error)
@@ -283,15 +309,7 @@ func New(ctx context.Context, cfg config.Config) (*Service, error) {
 		return nil, fmt.Errorf("build matrix client: %w", err)
 	}
 
-	_, err = client.Login(ctx, &mautrix.ReqLogin{
-		Type: mautrix.AuthTypePassword,
-		Identifier: mautrix.UserIdentifier{
-			Type: mautrix.IdentifierTypeUser,
-			User: cfg.Username,
-		},
-		Password:         cfg.Password,
-		StoreCredentials: true,
-	})
+	err = loginWithPassword(ctx, client, cfg.Username, cfg.Password)
 	if err != nil {
 		return nil, fmt.Errorf("matrix login: %w", err)
 	}
@@ -301,6 +319,55 @@ func New(ctx context.Context, cfg config.Config) (*Service, error) {
 		homeserverURL:     cfg.HomeserverURL,
 		registrationToken: cfg.RegistrationToken,
 	}, nil
+}
+
+func loginWithPassword(ctx context.Context, client *mautrix.Client, username, password string) error {
+	loginCtx, cancel := context.WithTimeout(ctx, loginRetryTimeout)
+	defer cancel()
+
+	for {
+		_, err := client.Login(loginCtx, &mautrix.ReqLogin{
+			Type: mautrix.AuthTypePassword,
+			Identifier: mautrix.UserIdentifier{
+				Type: mautrix.IdentifierTypeUser,
+				User: username,
+			},
+			Password:         password,
+			StoreCredentials: true,
+		})
+		if err == nil {
+			return nil
+		}
+		if !isTransientLoginError(err) || loginCtx.Err() != nil {
+			return err
+		}
+
+		select {
+		case <-loginCtx.Done():
+			return err
+		case <-time.After(loginRetryInterval):
+		}
+	}
+}
+
+func isTransientLoginError(err error) bool {
+	var httpErr mautrix.HTTPError
+	if errors.As(err, &httpErr) {
+		if httpErr.Response != nil {
+			if httpErr.Response.StatusCode >= http.StatusInternalServerError {
+				return true
+			}
+			if httpErr.Response.StatusCode == http.StatusTooManyRequests {
+				return true
+			}
+		}
+		if httpErr.RespError != nil && httpErr.RespError.CanRetry {
+			return true
+		}
+	}
+
+	var netErr net.Error
+	return errors.As(err, &netErr)
 }
 
 func (s *Service) Identity() Identity {
@@ -661,6 +728,25 @@ func (s *Service) JoinRoom(ctx context.Context, req JoinRoomRequest) (JoinRoomRe
 		return JoinRoomResult{}, fmt.Errorf("join room: %w", err)
 	}
 	return JoinRoomResult{RoomID: resp.RoomID.String()}, nil
+}
+
+func (s *Service) InviteRoomMember(ctx context.Context, req InviteRoomMemberRequest) (InviteRoomMemberResult, error) {
+	_, err := s.client.InviteUser(ctx, id.RoomID(req.RoomID), &mautrix.ReqInviteUser{
+		Reason: req.Reason,
+		UserID: id.UserID(req.UserID),
+	})
+	if err != nil {
+		return InviteRoomMemberResult{}, fmt.Errorf("invite room member: %w", err)
+	}
+	return InviteRoomMemberResult{RoomID: req.RoomID, UserID: req.UserID}, nil
+}
+
+func (s *Service) LeaveRoom(ctx context.Context, req LeaveRoomRequest) (LeaveRoomResult, error) {
+	_, err := s.client.LeaveRoom(ctx, id.RoomID(req.RoomID), &mautrix.ReqLeave{Reason: req.Reason})
+	if err != nil {
+		return LeaveRoomResult{}, fmt.Errorf("leave room: %w", err)
+	}
+	return LeaveRoomResult{RoomID: req.RoomID}, nil
 }
 
 func (s *Service) CreateRoomAlias(ctx context.Context, req CreateRoomAliasRequest) (CreateRoomAliasResult, error) {

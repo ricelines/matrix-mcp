@@ -26,6 +26,8 @@ const (
 	ScopeRoomsAliasWrite     Scope = "rooms.alias.write"
 	ScopeRoomsDirectoryWrite Scope = "rooms.directory.write"
 	ScopeRoomsJoin           Scope = "rooms.join"
+	ScopeRoomsInvite         Scope = "rooms.invite"
+	ScopeRoomsLeave          Scope = "rooms.leave"
 	ScopeRoomMembersRead     Scope = "room.members.read"
 	ScopeRoomStateRead       Scope = "room.state.read"
 	ScopeTimelineRead        Scope = "timeline.read"
@@ -60,6 +62,8 @@ var allScopes = []Info{
 	{Name: ScopeRoomsAliasWrite, Description: "Create and delete room aliases."},
 	{Name: ScopeRoomsDirectoryWrite, Description: "Publish and unpublish rooms in the room directory."},
 	{Name: ScopeRoomsJoin, Description: "Join rooms by room ID or alias."},
+	{Name: ScopeRoomsInvite, Description: "Invite users into existing rooms."},
+	{Name: ScopeRoomsLeave, Description: "Leave rooms the active account is currently joined to."},
 	{Name: ScopeRoomMembersRead, Description: "Read joined-member information for a room."},
 	{Name: ScopeRoomStateRead, Description: "Read room state events."},
 	{Name: ScopeTimelineRead, Description: "Read room timelines, events, context, and relations."},

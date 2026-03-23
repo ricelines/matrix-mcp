@@ -78,6 +78,28 @@ type joinRoomOutput struct {
 	RoomID string `json:"room_id" jsonschema:"Joined Matrix room ID"`
 }
 
+type inviteRoomMemberInput struct {
+	RoomID string `json:"room_id" jsonschema:"Matrix room ID where the invite should be sent"`
+	UserID string `json:"user_id" jsonschema:"Matrix user ID to invite into the room"`
+	Reason string `json:"reason,omitempty" jsonschema:"Optional invite reason"`
+}
+
+type inviteRoomMemberOutput struct {
+	BaseResult
+	RoomID string `json:"room_id" jsonschema:"Matrix room ID where the invite was sent"`
+	UserID string `json:"user_id" jsonschema:"Matrix user ID that was invited"`
+}
+
+type leaveRoomInput struct {
+	RoomID string `json:"room_id" jsonschema:"Matrix room ID to leave"`
+	Reason string `json:"reason,omitempty" jsonschema:"Optional leave reason"`
+}
+
+type leaveRoomOutput struct {
+	BaseResult
+	RoomID string `json:"room_id" jsonschema:"Matrix room ID that was left"`
+}
+
 func RegisterRooms(r *catalog.Registrar, deps Dependencies, active scopes.Set) {
 	r.AddModule("rooms", "Room discovery, inspection, alias, directory, creation, and join actions.")
 
@@ -282,6 +304,55 @@ func RegisterRooms(r *catalog.Registrar, deps Dependencies, active scopes.Set) {
 				return nil, joinRoomOutput{}, err
 			}
 			return nil, joinRoomOutput{BaseResult: deps.baseResult(), RoomID: result.RoomID}, nil
+		})
+	}
+
+	if active.Allows(scopes.ScopeRoomsInvite) {
+		catalog.AddTool(r, "rooms", scopes.ScopeRoomsInvite, &mcp.Tool{
+			Name:        "matrix.v1.rooms.invite",
+			Description: "Invite a Matrix user into an existing room.",
+		}, func(ctx context.Context, req *mcp.CallToolRequest, input inviteRoomMemberInput) (*mcp.CallToolResult, inviteRoomMemberOutput, error) {
+			if err := requireNonEmpty("room_id", input.RoomID); err != nil {
+				return nil, inviteRoomMemberOutput{}, err
+			}
+			if err := requireNonEmpty("user_id", input.UserID); err != nil {
+				return nil, inviteRoomMemberOutput{}, err
+			}
+			result, err := deps.Matrix.InviteRoomMember(ctx, matrixclient.InviteRoomMemberRequest{
+				RoomID: input.RoomID,
+				UserID: input.UserID,
+				Reason: input.Reason,
+			})
+			if err != nil {
+				return nil, inviteRoomMemberOutput{}, err
+			}
+			return nil, inviteRoomMemberOutput{
+				BaseResult: deps.baseResult(),
+				RoomID:     result.RoomID,
+				UserID:     result.UserID,
+			}, nil
+		})
+	}
+
+	if active.Allows(scopes.ScopeRoomsLeave) {
+		catalog.AddTool(r, "rooms", scopes.ScopeRoomsLeave, &mcp.Tool{
+			Name:        "matrix.v1.rooms.leave",
+			Description: "Leave a Matrix room.",
+		}, func(ctx context.Context, req *mcp.CallToolRequest, input leaveRoomInput) (*mcp.CallToolResult, leaveRoomOutput, error) {
+			if err := requireNonEmpty("room_id", input.RoomID); err != nil {
+				return nil, leaveRoomOutput{}, err
+			}
+			result, err := deps.Matrix.LeaveRoom(ctx, matrixclient.LeaveRoomRequest{
+				RoomID: input.RoomID,
+				Reason: input.Reason,
+			})
+			if err != nil {
+				return nil, leaveRoomOutput{}, err
+			}
+			return nil, leaveRoomOutput{
+				BaseResult: deps.baseResult(),
+				RoomID:     result.RoomID,
+			}, nil
 		})
 	}
 }

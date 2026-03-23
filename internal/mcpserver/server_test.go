@@ -44,6 +44,8 @@ type fakeMatrix struct {
 	lastCreateUser    matrixclient.CreateUserRequest
 	lastCreateRoom    matrixclient.CreateRoomRequest
 	lastJoinRoom      matrixclient.JoinRoomRequest
+	lastInviteRoom    matrixclient.InviteRoomMemberRequest
+	lastLeaveRoom     matrixclient.LeaveRoomRequest
 	lastCreateAlias   matrixclient.CreateRoomAliasRequest
 	lastDeleteAlias   string
 	lastDirectoryGet  string
@@ -188,6 +190,14 @@ func (f *fakeMatrix) JoinRoom(ctx context.Context, req matrixclient.JoinRoomRequ
 	f.lastJoinRoom = req
 	return f.joinedRoom, nil
 }
+func (f *fakeMatrix) InviteRoomMember(ctx context.Context, req matrixclient.InviteRoomMemberRequest) (matrixclient.InviteRoomMemberResult, error) {
+	f.lastInviteRoom = req
+	return matrixclient.InviteRoomMemberResult{RoomID: req.RoomID, UserID: req.UserID}, nil
+}
+func (f *fakeMatrix) LeaveRoom(ctx context.Context, req matrixclient.LeaveRoomRequest) (matrixclient.LeaveRoomResult, error) {
+	f.lastLeaveRoom = req
+	return matrixclient.LeaveRoomResult{RoomID: req.RoomID}, nil
+}
 func (f *fakeMatrix) CreateRoomAlias(ctx context.Context, req matrixclient.CreateRoomAliasRequest) (matrixclient.CreateRoomAliasResult, error) {
 	f.lastCreateAlias = req
 	return matrixclient.CreateRoomAliasResult{RoomAlias: req.RoomAlias, RoomID: req.RoomID}, nil
@@ -298,6 +308,12 @@ func TestScopeFiltering(t *testing.T) {
 	}
 	if seen["matrix.v1.messages.send_text"] {
 		t.Fatal("messages.send_text should not be available without messages.send scope")
+	}
+	if seen["matrix.v1.rooms.invite"] {
+		t.Fatal("rooms.invite should not be available without rooms.invite scope")
+	}
+	if seen["matrix.v1.rooms.leave"] {
+		t.Fatal("rooms.leave should not be available without rooms.leave scope")
 	}
 	if seen["matrix.v1.rooms.alias.create"] || seen["matrix.v1.rooms.directory.publish"] {
 		t.Fatal("room alias/directory write tools should not be available without their write scopes")
@@ -711,6 +727,65 @@ func TestRoomReadAndWriteTools(t *testing.T) {
 	}
 	if structuredMap(t, joined)["room_id"] != "!joined:example.com" || backend.lastJoinRoom.RoomIDOrAlias != "#public:example.com" {
 		t.Fatalf("unexpected rooms.join payload / request = %#v / %#v", structuredMap(t, joined), backend.lastJoinRoom)
+	}
+}
+
+func TestRoomInviteTool(t *testing.T) {
+	active, err := scopes.Parse("default,rooms.invite")
+	if err != nil {
+		t.Fatalf("Parse() error = %v", err)
+	}
+	backend := &fakeMatrix{}
+	server := New(backend, active)
+	session := connectTestSession(t, server)
+	ctx := context.Background()
+
+	invited, err := session.CallTool(ctx, &mcp.CallToolParams{
+		Name: "matrix.v1.rooms.invite",
+		Arguments: map[string]any{
+			"room_id": "!joined:example.com",
+			"user_id": "@bot:example.com",
+			"reason":  "onboarding",
+		},
+	})
+	if err != nil {
+		t.Fatalf("rooms.invite error = %v", err)
+	}
+	payload := structuredMap(t, invited)
+	if payload["room_id"] != "!joined:example.com" || payload["user_id"] != "@bot:example.com" {
+		t.Fatalf("unexpected rooms.invite payload = %#v", payload)
+	}
+	if backend.lastInviteRoom.RoomID != "!joined:example.com" || backend.lastInviteRoom.UserID != "@bot:example.com" || backend.lastInviteRoom.Reason != "onboarding" {
+		t.Fatalf("unexpected rooms.invite request = %#v", backend.lastInviteRoom)
+	}
+}
+
+func TestRoomLeaveTool(t *testing.T) {
+	active, err := scopes.Parse("default,rooms.leave")
+	if err != nil {
+		t.Fatalf("Parse() error = %v", err)
+	}
+	backend := &fakeMatrix{}
+	server := New(backend, active)
+	session := connectTestSession(t, server)
+	ctx := context.Background()
+
+	left, err := session.CallTool(ctx, &mcp.CallToolParams{
+		Name: "matrix.v1.rooms.leave",
+		Arguments: map[string]any{
+			"room_id": "!joined:example.com",
+			"reason":  "handoff complete",
+		},
+	})
+	if err != nil {
+		t.Fatalf("rooms.leave error = %v", err)
+	}
+	payload := structuredMap(t, left)
+	if payload["room_id"] != "!joined:example.com" {
+		t.Fatalf("unexpected rooms.leave payload = %#v", payload)
+	}
+	if backend.lastLeaveRoom.RoomID != "!joined:example.com" || backend.lastLeaveRoom.Reason != "handoff complete" {
+		t.Fatalf("unexpected rooms.leave request = %#v", backend.lastLeaveRoom)
 	}
 }
 

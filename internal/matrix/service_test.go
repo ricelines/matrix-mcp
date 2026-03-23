@@ -6,10 +6,46 @@ import (
 	"encoding/json"
 	"io"
 	"net/http"
+	"net/http/httptest"
 	"testing"
 
+	configpkg "github.com/ricelines/chat/matrix-mcp-go/internal/config"
 	"maunium.net/go/mautrix"
 )
+
+func TestNewRetriesTransientLoginFailure(t *testing.T) {
+	var loginCalls int
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/_matrix/client/v3/login" {
+			t.Fatalf("unexpected path %s", r.URL.Path)
+		}
+		loginCalls++
+		if loginCalls < 3 {
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusServiceUnavailable)
+			_, _ = w.Write([]byte(`{"errcode":"M_UNKNOWN","error":"try again"}`))
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"user_id":"@bot:example.com","access_token":"token","device_id":"DEV1"}`))
+	}))
+	defer server.Close()
+
+	svc, err := New(context.Background(), configpkg.Config{
+		HomeserverURL: server.URL,
+		Username:      "bot",
+		Password:      "pass",
+	})
+	if err != nil {
+		t.Fatalf("New() error = %v", err)
+	}
+	if loginCalls != 3 {
+		t.Fatalf("login call count = %d, want 3", loginCalls)
+	}
+	if !svc.IsActive() {
+		t.Fatalf("expected service to be active after retrying login")
+	}
+}
 
 func TestCreateUserWithRegistrationToken(t *testing.T) {
 	var calls int
