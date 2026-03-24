@@ -4,8 +4,8 @@ import (
 	"context"
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
-	"github.com/ricelines/chat/matrix-mcp-go/internal/catalog"
-	"github.com/ricelines/chat/matrix-mcp-go/internal/scopes"
+	"github.com/ricelines/matrix-mcp/internal/catalog"
+	"github.com/ricelines/matrix-mcp/internal/scopes"
 )
 
 type identityOutput struct {

@@ -1,6 +1,6 @@
-# matrix-mcp-go
+# matrix-mcp
 
-`matrix-mcp-go` is an MCP server for Matrix. You run it against one Matrix account, and an MCP client can then inspect rooms, users, state, and timelines on that account's behalf. If you enable additional scopes, it can also resolve or manage room aliases, inspect or change room-directory visibility, create users, create or join rooms, invite or remove users from rooms, and send or modify messages.
+`matrix-mcp` is an MCP server for Matrix. You run it against one Matrix account, and an MCP client can then inspect rooms, users, state, and timelines on that account's behalf. If you enable additional scopes, it can also resolve or manage room aliases, inspect or change room-directory visibility, create users, create or join rooms, invite or remove users from rooms, and send or modify messages.
 
 This server is for people who want Matrix available as a tool surface inside an MCP-capable workflow. It is not a Matrix bridge and it is not a multi-user service. Everything it does is done as the configured Matrix account.
 
@@ -65,7 +65,7 @@ export MATRIX_HOMESERVER_URL='https://matrix.example.com'
 export MATRIX_USERNAME='matrix-bot'
 export MATRIX_PASSWORD='replace-me'
 
-go run ./cmd/matrix-mcp-go-server
+go run ./cmd/matrix-mcp-server
 ```
 
 By default the server listens on `:8080` and exposes only the default read-oriented scopes.
@@ -78,7 +78,7 @@ http://127.0.0.1:8080/
 
 ## Using with Amber
 
-This repo ships an Amber component manifest at `amber.json5`. It exports one capability named `mcp`, backed by `ghcr.io/ricelines/matrix-mcp-go:v0.1`.
+This repo ships an Amber component manifest at `amber.json5`. It exports one capability named `mcp`, backed by `ghcr.io/ricelines/matrix-mcp:v0.1`.
 
 The manifest is slot-routed. The Matrix homeserver is always provided through the external `matrix` HTTP slot. That keeps the homeserver on the capability path instead of smuggling it through config.
 
@@ -91,7 +91,7 @@ amber check amber.json5
 Compile it to a Docker Compose runtime directory:
 
 ```bash
-amber compile amber.json5 --docker-compose /tmp/matrix-mcp-go-amber
+amber compile amber.json5 --docker-compose /tmp/matrix-mcp-amber
 ```
 
 That directory contains `compose.yaml`, `env.example`, and a generated README.
@@ -99,7 +99,7 @@ That directory contains `compose.yaml`, `env.example`, and a generated README.
 For a remote homeserver, set the external slot URL in `.env` and then expose the MCP export locally:
 
 ```bash
-cd /tmp/matrix-mcp-go-amber
+cd /tmp/matrix-mcp-amber
 cp env.example .env
 $EDITOR .env
 docker compose up -d
@@ -131,8 +131,8 @@ http://127.0.0.1:18080/
 If you start Compose with a custom project name, pass the same name to `amber proxy`:
 
 ```bash
-docker compose -p matrix-mcp-go up -d
-amber proxy . --project-name matrix-mcp-go --export mcp=127.0.0.1:18080
+docker compose -p matrix-mcp up -d
+amber proxy . --project-name matrix-mcp --export mcp=127.0.0.1:18080
 ```
 
 The Amber config schema exposes these fields:
@@ -158,7 +158,7 @@ docker run --rm -p 8080:8080 \
   -e MATRIX_HOMESERVER_URL='https://matrix.example.com' \
   -e MATRIX_USERNAME='matrix-bot' \
   -e MATRIX_PASSWORD='replace-me' \
-  ghcr.io/ricelines/matrix-mcp-go:v0.1
+  ghcr.io/ricelines/matrix-mcp:v0.1
 ```
 
 ## Configuration
@@ -184,7 +184,7 @@ export MATRIX_PASSWORD='replace-me'
 export MATRIX_MCP_LISTEN_ADDR='127.0.0.1:8080'
 export MATRIX_MCP_SCOPES='default,rooms.alias.read,rooms.directory.read,users.create,rooms.create,rooms.alias.write,rooms.directory.write,rooms.join,rooms.invite,rooms.leave,messages.send,messages.reply,messages.edit,messages.react,messages.redact'
 
-go run ./cmd/matrix-mcp-go-server
+go run ./cmd/matrix-mcp-server
 ```
 
 ## Scopes
@@ -275,13 +275,13 @@ For an agent-facing walkthrough with actual discovery-resource output and realis
 ## Building from source
 
 ```bash
-go build ./cmd/matrix-mcp-go-server
+go build ./cmd/matrix-mcp-server
 ```
 
 To build the container image:
 
 ```bash
-docker build -t matrix-mcp-go .
+docker build -t matrix-mcp .
 ```
 
 ## Testing
@@ -289,5 +289,5 @@ docker build -t matrix-mcp-go .
 Unit and integration coverage exists in the repo, including dockerized integration tests against Tuwunel. If you are changing behavior rather than just running the server, use:
 
 ```bash
-env GOCACHE=/tmp/matrix-mcp-go-build-cache go test ./...
+env GOCACHE=/tmp/matrix-mcp-build-cache go test ./...
 ```

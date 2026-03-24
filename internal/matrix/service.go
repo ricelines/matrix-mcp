@@ -13,7 +13,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/ricelines/chat/matrix-mcp-go/internal/config"
+	"github.com/ricelines/matrix-mcp/internal/config"
 	"maunium.net/go/mautrix"
 	"maunium.net/go/mautrix/event"
 	"maunium.net/go/mautrix/id"

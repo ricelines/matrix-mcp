@@ -11,11 +11,11 @@ import (
 	"strings"
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
-	"github.com/ricelines/chat/matrix-mcp-go/internal/catalog"
-	"github.com/ricelines/chat/matrix-mcp-go/internal/config"
-	matrixclient "github.com/ricelines/chat/matrix-mcp-go/internal/matrix"
-	"github.com/ricelines/chat/matrix-mcp-go/internal/modules"
-	"github.com/ricelines/chat/matrix-mcp-go/internal/scopes"
+	"github.com/ricelines/matrix-mcp/internal/catalog"
+	"github.com/ricelines/matrix-mcp/internal/config"
+	matrixclient "github.com/ricelines/matrix-mcp/internal/matrix"
+	"github.com/ricelines/matrix-mcp/internal/modules"
+	"github.com/ricelines/matrix-mcp/internal/scopes"
 )
 
 const (
@@ -39,7 +39,7 @@ func NewFromConfig(ctx context.Context, cfg config.Config) (*Server, error) {
 }
 
 func New(matrix matrixclient.API, active scopes.Set) *Server {
-	server := mcp.NewServer(&mcp.Implementation{Name: "matrix-mcp-go", Version: "0.1.0"}, nil)
+	server := mcp.NewServer(&mcp.Implementation{Name: "matrix-mcp", Version: "0.1.0"}, nil)
 	registrar := catalog.NewRegistrar(server)
 	modules.RegisterAll(registrar, matrix, active)
 

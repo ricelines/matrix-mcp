@@ -8,7 +8,7 @@ import (
 	"testing"
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
-	matrixclient "github.com/ricelines/chat/matrix-mcp-go/internal/matrix"
+	matrixclient "github.com/ricelines/matrix-mcp/internal/matrix"
 	"maunium.net/go/mautrix"
 	"maunium.net/go/mautrix/id"
 )
@@ -51,7 +51,7 @@ func TestRegistrationAndDiscoveryAgainstTuwunel(t *testing.T) {
 	created := callToolMap(t, ctx, session, "matrix.v1.users.create", map[string]any{
 		"username":                    createdUsername,
 		"password":                    createdPassword,
-		"initial_device_display_name": "matrix-mcp-go integration",
+		"initial_device_display_name": "matrix-mcp integration",
 	})
 	if created["user_id"] == "" {
 		t.Fatalf("users.create payload = %#v", created)

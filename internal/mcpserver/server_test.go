@@ -9,8 +9,8 @@ import (
 	"testing"
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
-	matrixclient "github.com/ricelines/chat/matrix-mcp-go/internal/matrix"
-	"github.com/ricelines/chat/matrix-mcp-go/internal/scopes"
+	matrixclient "github.com/ricelines/matrix-mcp/internal/matrix"
+	"github.com/ricelines/matrix-mcp/internal/scopes"
 )
 
 type fakeMatrix struct {

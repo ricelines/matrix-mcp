@@ -9,8 +9,8 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/ricelines/chat/matrix-mcp-go/internal/config"
-	"github.com/ricelines/chat/matrix-mcp-go/internal/mcpserver"
+	"github.com/ricelines/matrix-mcp/internal/config"
+	"github.com/ricelines/matrix-mcp/internal/mcpserver"
 )
 
 func main() {
@@ -39,7 +39,7 @@ func main() {
 		_ = httpServer.Shutdown(shutdownCtx)
 	}()
 
-	log.Printf("matrix-mcp-go listening on %s", cfg.ListenAddr)
+	log.Printf("matrix-mcp listening on %s", cfg.ListenAddr)
 	if err := httpServer.ListenAndServe(); err != nil && err != http.ErrServerClosed {
 		log.Fatalf("listen: %v", err)
 	}

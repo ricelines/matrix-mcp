@@ -9,7 +9,7 @@ import (
 	"net/http/httptest"
 	"testing"
 
-	configpkg "github.com/ricelines/chat/matrix-mcp-go/internal/config"
+	configpkg "github.com/ricelines/matrix-mcp/internal/config"
 	"maunium.net/go/mautrix"
 )
 

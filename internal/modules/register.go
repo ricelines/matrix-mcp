@@ -4,9 +4,9 @@ import (
 	"sync/atomic"
 	"time"
 
-	"github.com/ricelines/chat/matrix-mcp-go/internal/catalog"
-	matrixclient "github.com/ricelines/chat/matrix-mcp-go/internal/matrix"
-	"github.com/ricelines/chat/matrix-mcp-go/internal/scopes"
+	"github.com/ricelines/matrix-mcp/internal/catalog"
+	matrixclient "github.com/ricelines/matrix-mcp/internal/matrix"
+	"github.com/ricelines/matrix-mcp/internal/scopes"
 )
 
 func RegisterAll(r *catalog.Registrar, matrix matrixclient.API, active scopes.Set) {

@@ -6,7 +6,7 @@ import (
 
 	"github.com/google/jsonschema-go/jsonschema"
 	"github.com/modelcontextprotocol/go-sdk/mcp"
-	"github.com/ricelines/chat/matrix-mcp-go/internal/scopes"
+	"github.com/ricelines/matrix-mcp/internal/scopes"
 )
 
 type ModuleMeta struct {

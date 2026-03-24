@@ -1,4 +1,4 @@
-module github.com/ricelines/chat/matrix-mcp-go
+module github.com/ricelines/matrix-mcp
 
 go 1.25.0
 

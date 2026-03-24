@@ -27,8 +27,8 @@
   },
 
   program: {
-    image: "ghcr.io/ricelines/matrix-mcp-go:v0.1",
-    entrypoint: ["/app/matrix-mcp-go-server"],
+    image: "ghcr.io/ricelines/matrix-mcp:v0.1",
+    entrypoint: ["/app/matrix-mcp-server"],
     env: {
       MATRIX_HOMESERVER_URL: "${slots.matrix.url}",
       MATRIX_USERNAME: "${config.username}",

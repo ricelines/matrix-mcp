@@ -29,15 +29,15 @@ RUN --mount=type=cache,target=/go/pkg/mod,sharing=locked \
         -buildvcs=false \
         -trimpath \
         -ldflags='-s -w' \
-        -o /out/matrix-mcp-go-server \
-        ./cmd/matrix-mcp-go-server
+        -o /out/matrix-mcp-server \
+        ./cmd/matrix-mcp-server
 
 FROM gcr.io/distroless/static-debian13:nonroot AS runtime
 
 WORKDIR /app
 
-COPY --from=build --chown=65532:65532 /out/matrix-mcp-go-server /app/matrix-mcp-go-server
+COPY --from=build --chown=65532:65532 /out/matrix-mcp-server /app/matrix-mcp-server
 
 EXPOSE 8080
 
-ENTRYPOINT ["/app/matrix-mcp-go-server"]
+ENTRYPOINT ["/app/matrix-mcp-server"]

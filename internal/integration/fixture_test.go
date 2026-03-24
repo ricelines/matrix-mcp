@@ -10,10 +10,10 @@ import (
 	"time"
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
-	"github.com/ricelines/chat/matrix-mcp-go/internal/config"
-	"github.com/ricelines/chat/matrix-mcp-go/internal/mcpserver"
-	"github.com/ricelines/chat/matrix-mcp-go/internal/scopes"
-	"github.com/ricelines/chat/matrix-mcp-go/internal/testutil/tuwunel"
+	"github.com/ricelines/matrix-mcp/internal/config"
+	"github.com/ricelines/matrix-mcp/internal/mcpserver"
+	"github.com/ricelines/matrix-mcp/internal/scopes"
+	"github.com/ricelines/matrix-mcp/internal/testutil/tuwunel"
 	"maunium.net/go/mautrix"
 )
 

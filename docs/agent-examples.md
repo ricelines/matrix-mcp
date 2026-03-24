@@ -1,6 +1,6 @@
 # Agent Discovery And Example Exchanges
 
-This document shows what an agent actually sees when it connects to `matrix-mcp-go`, how it is expected to discover the tool surface, and a few realistic call sequences.
+This document shows what an agent actually sees when it connects to `matrix-mcp`, how it is expected to discover the tool surface, and a few realistic call sequences.
 
 The resource snippets below are abbreviated from a real local run of the server. The Matrix data is illustrative, but the discovery flow, tool names, and request/response shapes are real.
 

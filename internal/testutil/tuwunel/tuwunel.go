@@ -48,7 +48,7 @@ func Start(t testing.TB, opts Options) *Instance {
 	}
 
 	hostPort := reservePort(t)
-	containerName := fmt.Sprintf("matrix-mcp-go-%d", time.Now().UnixNano())
+	containerName := fmt.Sprintf("matrix-mcp-%d", time.Now().UnixNano())
 	inst := &Instance{
 		containerName:     containerName,
 		baseDir:           baseDir,
@@ -77,7 +77,7 @@ func StartManaged(opts Options) (*Instance, error) {
 		return nil, fmt.Errorf("docker is required for integration tests: %w", err)
 	}
 
-	baseDir, err := os.MkdirTemp("", "matrix-mcp-go-tuwunel-*")
+	baseDir, err := os.MkdirTemp("", "matrix-mcp-tuwunel-*")
 	if err != nil {
 		return nil, fmt.Errorf("create temp dir: %w", err)
 	}
@@ -206,7 +206,7 @@ func startWithBaseDir(baseDir string, opts Options) (*Instance, error) {
 	if err != nil {
 		return nil, fmt.Errorf("reserve port: %w", err)
 	}
-	containerName := fmt.Sprintf("matrix-mcp-go-%d", time.Now().UnixNano())
+	containerName := fmt.Sprintf("matrix-mcp-%d", time.Now().UnixNano())
 	inst := &Instance{
 		containerName:     containerName,
 		baseDir:           baseDir,

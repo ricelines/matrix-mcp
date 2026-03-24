@@ -6,7 +6,7 @@ import (
 	"sync/atomic"
 	"time"
 
-	matrixclient "github.com/ricelines/chat/matrix-mcp-go/internal/matrix"
+	matrixclient "github.com/ricelines/matrix-mcp/internal/matrix"
 )
 
 type Audit struct {

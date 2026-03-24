@@ -5,7 +5,7 @@ import (
 	"os"
 	"strings"
 
-	"github.com/ricelines/chat/matrix-mcp-go/internal/scopes"
+	"github.com/ricelines/matrix-mcp/internal/scopes"
 )
 
 const (
