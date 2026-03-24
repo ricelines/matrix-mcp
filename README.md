@@ -1,6 +1,6 @@
 # matrix-mcp-go
 
-`matrix-mcp-go` is an MCP server for Matrix. You run it against one Matrix account, and an MCP client can then inspect rooms, users, state, and timelines on that account's behalf. If you enable additional scopes, it can also resolve or manage room aliases, inspect or change room-directory visibility, create users, create or join rooms, and send or modify messages.
+`matrix-mcp-go` is an MCP server for Matrix. You run it against one Matrix account, and an MCP client can then inspect rooms, users, state, and timelines on that account's behalf. If you enable additional scopes, it can also resolve or manage room aliases, inspect or change room-directory visibility, create users, create or join rooms, invite or remove users from rooms, and send or modify messages.
 
 This server is for people who want Matrix available as a tool surface inside an MCP-capable workflow. It is not a Matrix bridge and it is not a multi-user service. Everything it does is done as the configured Matrix account.
 
@@ -28,6 +28,8 @@ If you opt into write scopes, it can also:
 - create or delete room aliases
 - publish or unpublish rooms in the room directory
 - join rooms
+- invite users to rooms
+- leave rooms
 - send messages
 - reply to messages
 - edit messages
@@ -78,6 +80,8 @@ http://127.0.0.1:8080/
 
 This repo ships an Amber component manifest at `amber.json5`. It exports one capability named `mcp`, backed by `ghcr.io/ricelines/matrix-mcp-go:v0.1`.
 
+The manifest is slot-routed. The Matrix homeserver is always provided through the external `matrix` HTTP slot. That keeps the homeserver on the capability path instead of smuggling it through config.
+
 Validate the manifest:
 
 ```bash
@@ -90,7 +94,9 @@ Compile it to a Docker Compose runtime directory:
 amber compile amber.json5 --docker-compose /tmp/matrix-mcp-go-amber
 ```
 
-That directory contains `compose.yaml`, `env.example`, and a generated README. The normal flow is:
+That directory contains `compose.yaml`, `env.example`, and a generated README.
+
+For a remote homeserver, set the external slot URL in `.env` and then expose the MCP export locally:
 
 ```bash
 cd /tmp/matrix-mcp-go-amber
@@ -98,6 +104,22 @@ cp env.example .env
 $EDITOR .env
 docker compose up -d
 amber proxy . --export mcp=127.0.0.1:18080
+```
+
+Set these values in `.env`:
+
+```dotenv
+AMBER_EXTERNAL_SLOT_MATRIX_URL=https://matrix.example.com
+AMBER_CONFIG_USERNAME=matrix-bot
+AMBER_CONFIG_PASSWORD=replace-me
+```
+
+For a local homeserver, you can also bind the slot directly through `amber proxy` instead of `.env`:
+
+```bash
+amber proxy . \
+  --slot matrix=127.0.0.1:8008 \
+  --export mcp=127.0.0.1:18080
 ```
 
 Your local MCP endpoint is then:
@@ -115,12 +137,15 @@ amber proxy . --project-name matrix-mcp-go --export mcp=127.0.0.1:18080
 
 The Amber config schema exposes these fields:
 
-- `homeserver_url`
 - `username`
 - `password`
 - `registration_token`
 - `scopes`
 - `listen_addr`
+
+The Amber manifest also requires one external slot:
+
+- `matrix`: HTTP capability for the homeserver base URL
 
 `password` and `registration_token` are marked secret in the manifest schema.
 
@@ -157,7 +182,7 @@ export MATRIX_HOMESERVER_URL='https://matrix.example.com'
 export MATRIX_USERNAME='matrix-bot'
 export MATRIX_PASSWORD='replace-me'
 export MATRIX_MCP_LISTEN_ADDR='127.0.0.1:8080'
-export MATRIX_MCP_SCOPES='default,rooms.alias.read,rooms.directory.read,users.create,rooms.create,rooms.alias.write,rooms.directory.write,rooms.join,messages.send,messages.reply,messages.edit,messages.react,messages.redact'
+export MATRIX_MCP_SCOPES='default,rooms.alias.read,rooms.directory.read,users.create,rooms.create,rooms.alias.write,rooms.directory.write,rooms.join,rooms.invite,rooms.leave,messages.send,messages.reply,messages.edit,messages.react,messages.redact'
 
 go run ./cmd/matrix-mcp-go-server
 ```
@@ -187,6 +212,8 @@ Additional write scopes unlock mutations:
 - `rooms.alias.write`
 - `rooms.directory.write`
 - `rooms.join`
+- `rooms.invite`
+- `rooms.leave`
 - `messages.send`
 - `messages.reply`
 - `messages.edit`
@@ -198,7 +225,7 @@ Additional write scopes unlock mutations:
 - `default`
 - `default,messages.send`
 - `default,rooms.alias.read,rooms.directory.read`
-- `default,rooms.create,rooms.alias.write,rooms.directory.write,rooms.join,messages.send`
+- `default,rooms.create,rooms.alias.write,rooms.directory.write,rooms.join,rooms.invite,rooms.leave,messages.send`
 
 If you want a read-only deployment, leave `MATRIX_MCP_SCOPES` unset.
 
@@ -209,7 +236,7 @@ Reasonable starting points:
 - Read-only assistant: `default`
 - Read-only assistant that can inspect aliases and room-directory visibility: `default,rooms.alias.read,rooms.directory.read`
 - Messaging bot in existing rooms: `default,messages.send,messages.reply,messages.edit,messages.react`
-- Room-management bot: `default,rooms.alias.read,rooms.directory.read,rooms.create,rooms.alias.write,rooms.directory.write,rooms.join,messages.send`
+- Room-management bot: `default,rooms.alias.read,rooms.directory.read,rooms.create,rooms.alias.write,rooms.directory.write,rooms.join,rooms.invite,rooms.leave,messages.send`
 - Provisioning workflow that can create accounts: `default,users.create`
 
 Avoid granting write scopes just because they exist. The point of the scope model is to make the MCP surface smaller and safer than "full Matrix client access."
@@ -221,7 +248,7 @@ The server currently exposes tools under these module groups:
 - `client`: who the server is logged in as, and whether that session is active
 - `server`: homeserver versions and capability metadata
 - `users`: username availability, directory search, profile lookup, and optional user creation
-- `rooms`: list joined rooms, inspect or preview a room, and, when the corresponding scopes are enabled, resolve or manage room aliases, inspect or manage room-directory visibility, and create or join rooms
+- `rooms`: list joined rooms, inspect or preview a room, and, when the corresponding scopes are enabled, resolve or manage room aliases, inspect or manage room-directory visibility, create or join rooms, invite users, and leave rooms
 - `room.members`: list or fetch joined members in a room
 - `room.state`: fetch one state event or list visible state in a room
 - `timeline`: paginate messages, fetch an event, inspect context around an event, list relations such as reactions or edits
