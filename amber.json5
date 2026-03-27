@@ -26,6 +26,15 @@
     matrix: { kind: "http" },
   },
 
+  resources: {
+    state: {
+      kind: "storage",
+      params: {
+        size: "64Mi",
+      },
+    },
+  },
+
   program: {
     image: "ghcr.io/ricelines/matrix-mcp:v0.1",
     entrypoint: ["/app/matrix-mcp-server"],
@@ -37,9 +46,13 @@
         when: "config.registration_token",
         value: "${config.registration_token}",
       },
+      MATRIX_E2EE_DB_PATH: "/app/data/e2ee.db",
       MATRIX_MCP_SCOPES: "${config.scopes}",
       MATRIX_MCP_LISTEN_ADDR: "${config.listen_addr}",
     },
+    mounts: [
+      { path: "/app/data", from: "resources.state" },
+    ],
     network: {
       endpoints: [
         { name: "mcp", port: 8080, protocol: "http" },

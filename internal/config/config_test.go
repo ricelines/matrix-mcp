@@ -7,6 +7,7 @@ func TestFromEnvDefaultsScopesAndListenAddr(t *testing.T) {
 	t.Setenv(envUsername, "bot")
 	t.Setenv(envPassword, "secret")
 	t.Setenv(envRegistrationToken, " invite-token ")
+	t.Setenv(envE2EEDBPath, " data/e2ee.db ")
 	t.Setenv(envListenAddr, "")
 	t.Setenv(envScopes, "")
 
@@ -19,6 +20,9 @@ func TestFromEnvDefaultsScopesAndListenAddr(t *testing.T) {
 	}
 	if cfg.RegistrationToken != "invite-token" {
 		t.Fatalf("RegistrationToken = %q, want invite-token", cfg.RegistrationToken)
+	}
+	if cfg.E2EEDBPath != "data/e2ee.db" {
+		t.Fatalf("E2EEDBPath = %q, want data/e2ee.db", cfg.E2EEDBPath)
 	}
 	if got := cfg.Scopes.Names(); len(got) == 0 {
 		t.Fatalf("default scopes should not be empty")

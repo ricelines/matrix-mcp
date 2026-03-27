@@ -17,6 +17,8 @@ jobs:
   verify:
     runs-on: ubuntu-latest
     timeout-minutes: 15
+    env:
+      GOFLAGS: -tags=goolm
 
     steps:
       - name: Check out source
@@ -47,6 +49,8 @@ jobs:
   integration:
     runs-on: ubuntu-latest
     timeout-minutes: 20
+    env:
+      GOFLAGS: -tags=goolm
 
     steps:
       - name: Check out source

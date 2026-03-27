@@ -9,7 +9,9 @@ ARG TARGETARCH
 
 WORKDIR /src
 
-ENV CGO_ENABLED=0 \
+RUN apt-get update && apt-get install -y --no-install-recommends build-essential pkg-config && rm -rf /var/lib/apt/lists/*
+
+ENV CGO_ENABLED=1 \
     GOMODCACHE=/go/pkg/mod \
     GOCACHE=/root/.cache/go-build
 
@@ -24,15 +26,16 @@ COPY --link internal ./internal
 
 RUN --mount=type=cache,target=/go/pkg/mod,sharing=locked \
     --mount=type=cache,target=/root/.cache/go-build,sharing=locked \
-    CGO_ENABLED=0 GOOS=${TARGETOS:-linux} GOARCH=${TARGETARCH:-amd64} \
+    CGO_ENABLED=1 GOOS=${TARGETOS:-linux} GOARCH=${TARGETARCH:-amd64} \
     go build \
+        -tags=goolm \
         -buildvcs=false \
         -trimpath \
         -ldflags='-s -w' \
         -o /out/matrix-mcp-server \
         ./cmd/matrix-mcp-server
 
-FROM gcr.io/distroless/static-debian13:nonroot AS runtime
+FROM gcr.io/distroless/base-debian13:nonroot AS runtime
 
 WORKDIR /app
 

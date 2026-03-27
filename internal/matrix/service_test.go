@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -11,6 +12,8 @@ import (
 
 	configpkg "github.com/ricelines/matrix-mcp/internal/config"
 	"maunium.net/go/mautrix"
+	"maunium.net/go/mautrix/event"
+	"maunium.net/go/mautrix/id"
 )
 
 func TestNewRetriesTransientLoginFailure(t *testing.T) {
@@ -275,6 +278,69 @@ func TestRoomDirectoryVisibilityOperations(t *testing.T) {
 	}
 	if unpublished.Visibility != RoomDirectoryVisibilityPrivate {
 		t.Fatalf("unexpected SetRoomDirectoryVisibility(private) result = %#v", unpublished)
+	}
+}
+
+func TestSummarizeEventRejectsEncryptedEventWithoutE2EE(t *testing.T) {
+	svc := &Service{}
+
+	_, err := svc.summarizeEvent(context.Background(), &event.Event{
+		ID:     id.EventID("$enc"),
+		RoomID: id.RoomID("!room:example.com"),
+		Sender: id.UserID("@alice:example.com"),
+		Type:   event.EventEncrypted,
+		Content: event.Content{
+			Raw: map[string]any{
+				"algorithm":  "m.megolm.v1.aes-sha2",
+				"ciphertext": "opaque",
+			},
+		},
+	})
+	if !errors.Is(err, errEventContentUnavailable) {
+		t.Fatalf("summarizeEvent() error = %v, want errEventContentUnavailable", err)
+	}
+}
+
+func TestSummarizeEventsSkipsEncryptedEventsWithoutE2EE(t *testing.T) {
+	svc := &Service{}
+
+	summaries, err := svc.summarizeEvents(context.Background(), []*event.Event{
+		{
+			ID:     id.EventID("$enc"),
+			RoomID: id.RoomID("!room:example.com"),
+			Sender: id.UserID("@alice:example.com"),
+			Type:   event.EventEncrypted,
+			Content: event.Content{
+				Raw: map[string]any{
+					"algorithm":  "m.megolm.v1.aes-sha2",
+					"ciphertext": "opaque",
+				},
+			},
+		},
+		{
+			ID:     id.EventID("$msg"),
+			RoomID: id.RoomID("!room:example.com"),
+			Sender: id.UserID("@alice:example.com"),
+			Type:   event.EventMessage,
+			Content: event.Content{
+				Raw: map[string]any{
+					"msgtype": "m.text",
+					"body":    "hello",
+				},
+			},
+		},
+	})
+	if err != nil {
+		t.Fatalf("summarizeEvents() error = %v", err)
+	}
+	if len(summaries) != 1 {
+		t.Fatalf("summaries len = %d, want 1", len(summaries))
+	}
+	if summaries[0].EventID != "$msg" || summaries[0].Type != event.EventMessage.Type {
+		t.Fatalf("summaries[0] = %#v, want plaintext message summary", summaries[0])
+	}
+	if summaries[0].Content["body"] != "hello" {
+		t.Fatalf("summaries[0].content = %#v, want plaintext body", summaries[0].Content)
 	}
 }
 

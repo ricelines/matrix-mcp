@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"net/http/httptest"
 	"os"
+	"path/filepath"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -105,6 +106,48 @@ func newIntegrationSession(t *testing.T, ctx context.Context, hs *tuwunel.Instan
 	if err != nil {
 		t.Fatalf("NewFromConfig() error = %v", err)
 	}
+	t.Cleanup(func() {
+		_ = server.Close()
+	})
+
+	httpServer := httptest.NewServer(server.Handler())
+	t.Cleanup(httpServer.Close)
+
+	client := mcp.NewClient(&mcp.Implementation{Name: "integration-client", Version: "1.0.0"}, nil)
+	session, err := client.Connect(ctx, &mcp.StreamableClientTransport{Endpoint: httpServer.URL}, nil)
+	if err != nil {
+		t.Fatalf("client connect: %v", err)
+	}
+	t.Cleanup(func() {
+		_ = session.Close()
+	})
+
+	return session
+}
+
+func newIntegrationSessionWithE2EE(t *testing.T, ctx context.Context, hs *tuwunel.Instance, username, password, rawScopes string) *mcp.ClientSession {
+	t.Helper()
+
+	activeScopes, err := scopes.Parse(rawScopes)
+	if err != nil {
+		t.Fatalf("Parse() error = %v", err)
+	}
+
+	server, err := mcpserver.NewFromConfig(ctx, config.Config{
+		ListenAddr:        ":0",
+		HomeserverURL:     hs.HomeserverURL,
+		Username:          username,
+		Password:          password,
+		RegistrationToken: hs.RegistrationToken,
+		E2EEDBPath:        filepath.Join(t.TempDir(), "matrix-mcp-e2ee.db"),
+		Scopes:            activeScopes,
+	})
+	if err != nil {
+		t.Fatalf("NewFromConfig() with E2EE error = %v", err)
+	}
+	t.Cleanup(func() {
+		_ = server.Close()
+	})
 
 	httpServer := httptest.NewServer(server.Handler())
 	t.Cleanup(httpServer.Close)

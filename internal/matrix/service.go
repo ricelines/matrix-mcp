@@ -11,10 +11,12 @@ import (
 	"net/http"
 	"sort"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/ricelines/matrix-mcp/internal/config"
 	"maunium.net/go/mautrix"
+	"maunium.net/go/mautrix/crypto/cryptohelper"
 	"maunium.net/go/mautrix/event"
 	"maunium.net/go/mautrix/id"
 )
@@ -27,6 +29,8 @@ const (
 	loginRetryInterval             = 250 * time.Millisecond
 	loginRetryTimeout              = 15 * time.Second
 )
+
+var errEventContentUnavailable = errors.New("event content unavailable")
 
 type Identity struct {
 	UserID        string
@@ -296,6 +300,11 @@ type Service struct {
 	homeserverURL         string
 	registrationToken     string
 	newRegistrationClient func(string) (*mautrix.Client, error)
+	cryptoHelper          *cryptohelper.CryptoHelper
+	syncCancel            context.CancelFunc
+	syncDone              chan struct{}
+	closeOnce             sync.Once
+	closeErr              error
 }
 
 type registrationTokenAuthData struct {
@@ -308,17 +317,91 @@ func New(ctx context.Context, cfg config.Config) (*Service, error) {
 	if err != nil {
 		return nil, fmt.Errorf("build matrix client: %w", err)
 	}
+	client.DefaultHTTPRetries = 3
+	client.DefaultHTTPBackoff = 2 * time.Second
 
-	err = loginWithPassword(ctx, client, cfg.Username, cfg.Password)
-	if err != nil {
-		return nil, fmt.Errorf("matrix login: %w", err)
-	}
-
-	return &Service{
+	service := &Service{
 		client:            client,
 		homeserverURL:     cfg.HomeserverURL,
 		registrationToken: cfg.RegistrationToken,
-	}, nil
+	}
+
+	if strings.TrimSpace(cfg.E2EEDBPath) == "" {
+		err = loginWithPassword(ctx, client, cfg.Username, cfg.Password)
+		if err != nil {
+			return nil, fmt.Errorf("matrix login: %w", err)
+		}
+		return service, nil
+	}
+
+	if err := service.initCrypto(ctx, cfg); err != nil {
+		return nil, err
+	}
+	return service, nil
+}
+
+func (s *Service) initCrypto(ctx context.Context, cfg config.Config) error {
+	pickleKey, err := loadOrCreatePickleKey(pickleKeyPathForDB(cfg.E2EEDBPath))
+	if err != nil {
+		return fmt.Errorf("load matrix pickle key: %w", err)
+	}
+
+	helper, err := cryptohelper.NewCryptoHelper(s.client, pickleKey, cfg.E2EEDBPath)
+	if err != nil {
+		return fmt.Errorf("create matrix crypto helper: %w", err)
+	}
+	helper.LoginAs = &mautrix.ReqLogin{
+		Type: mautrix.AuthTypePassword,
+		Identifier: mautrix.UserIdentifier{
+			Type: mautrix.IdentifierTypeUser,
+			User: cfg.Username,
+		},
+		Password:                 cfg.Password,
+		InitialDeviceDisplayName: "matrix-mcp",
+	}
+
+	if err := helper.Init(ctx); err != nil {
+		_ = helper.Close()
+		return fmt.Errorf("initialize matrix crypto helper: %w", err)
+	}
+
+	s.client.Crypto = helper
+	s.cryptoHelper = helper
+	s.startSync(ctx)
+	return nil
+}
+
+func (s *Service) startSync(parent context.Context) {
+	syncCtx, cancel := context.WithCancel(parent)
+	s.syncCancel = cancel
+	s.syncDone = make(chan struct{})
+
+	go func() {
+		defer close(s.syncDone)
+		if err := s.client.SyncWithContext(syncCtx); err != nil && !errors.Is(err, context.Canceled) {
+			// Keep serving requests; a transient sync failure should not kill the MCP process.
+		}
+	}()
+}
+
+func (s *Service) Close() error {
+	if s == nil {
+		return nil
+	}
+
+	s.closeOnce.Do(func() {
+		if s.syncCancel != nil {
+			s.syncCancel()
+		}
+		if s.syncDone != nil {
+			<-s.syncDone
+		}
+		if s.cryptoHelper != nil {
+			s.closeErr = errors.Join(s.closeErr, s.cryptoHelper.Close())
+		}
+	})
+
+	return s.closeErr
 }
 
 func loginWithPassword(ctx context.Context, client *mautrix.Client, username, password string) error {
@@ -368,6 +451,117 @@ func isTransientLoginError(err error) bool {
 
 	var netErr net.Error
 	return errors.As(err, &netErr)
+}
+
+func (s *Service) decryptEvent(ctx context.Context, evt *event.Event) (*event.Event, error) {
+	if evt == nil || evt.Type != event.EventEncrypted {
+		return evt, nil
+	}
+	if s.cryptoHelper == nil {
+		return nil, errEventContentUnavailable
+	}
+
+	decrypted, err := s.cryptoHelper.Decrypt(ctx, evt)
+	if err == nil {
+		if decrypted == nil || decrypted.Type == event.EventEncrypted {
+			return nil, errEventContentUnavailable
+		}
+		return decrypted, nil
+	}
+	if !errors.Is(err, cryptohelper.NoSessionFound) {
+		return nil, errEventContentUnavailable
+	}
+
+	content := evt.Content.AsEncrypted()
+	go s.cryptoHelper.RequestSession(context.Background(), evt.RoomID, content.SenderKey, content.SessionID, evt.Sender, content.DeviceID)
+	if !s.cryptoHelper.WaitForSession(ctx, evt.RoomID, content.SenderKey, content.SessionID, 5*time.Second) {
+		return nil, errEventContentUnavailable
+	}
+
+	decrypted, err = s.cryptoHelper.Decrypt(ctx, evt)
+	if err != nil {
+		return nil, errEventContentUnavailable
+	}
+	if decrypted == nil || decrypted.Type == event.EventEncrypted {
+		return nil, errEventContentUnavailable
+	}
+	return decrypted, nil
+}
+
+func (s *Service) summarizeEvent(ctx context.Context, evt *event.Event) (EventSummary, error) {
+	decrypted, err := s.decryptEvent(ctx, evt)
+	if err != nil {
+		return EventSummary{}, err
+	}
+	return summarizeEvent(decrypted), nil
+}
+
+func (s *Service) summarizeEvents(ctx context.Context, events []*event.Event) ([]EventSummary, error) {
+	result := make([]EventSummary, 0, len(events))
+	for _, evt := range events {
+		if evt == nil {
+			continue
+		}
+		summary, err := s.summarizeEvent(ctx, evt)
+		if err != nil {
+			if errors.Is(err, errEventContentUnavailable) {
+				continue
+			}
+			return nil, err
+		}
+		result = append(result, summary)
+	}
+	sortEvents(result)
+	return result, nil
+}
+
+func (s *Service) ensureRoomSendState(ctx context.Context, roomID id.RoomID) error {
+	if s.client == nil || s.client.StateStore == nil || s.client.Crypto == nil {
+		return nil
+	}
+
+	encrypted, err := s.client.StateStore.IsEncrypted(ctx, roomID)
+	if err != nil {
+		return fmt.Errorf("check room encryption state: %w", err)
+	}
+	if !encrypted {
+		var content event.EncryptionEventContent
+		err = s.client.StateEvent(ctx, roomID, event.StateEncryption, "", &content)
+		switch {
+		case err == nil:
+			encrypted = content.Algorithm == id.AlgorithmMegolmV1
+		case errors.Is(err, mautrix.MNotFound):
+			return nil
+		default:
+			return fmt.Errorf("load room encryption state: %w", err)
+		}
+	}
+	if !encrypted {
+		return nil
+	}
+
+	fetched, err := s.client.StateStore.HasFetchedMembers(ctx, roomID)
+	if err == nil && fetched {
+		return nil
+	}
+
+	resp, err := s.client.JoinedMembers(ctx, roomID)
+	if err != nil {
+		return fmt.Errorf("load joined room members: %w", err)
+	}
+	for userID, member := range resp.Joined {
+		if err := s.client.StateStore.SetMember(ctx, roomID, userID, &event.MemberEventContent{
+			Membership:  event.MembershipJoin,
+			Displayname: member.DisplayName,
+			AvatarURL:   id.ContentURIString(member.AvatarURL),
+		}); err != nil {
+			return fmt.Errorf("store joined room member %s: %w", userID, err)
+		}
+	}
+	if err := s.client.StateStore.MarkMembersFetched(ctx, roomID); err != nil {
+		return fmt.Errorf("mark room members fetched: %w", err)
+	}
+	return nil
 }
 
 func (s *Service) Identity() Identity {
@@ -594,7 +788,7 @@ func (s *Service) GetStateEvent(ctx context.Context, roomID string, eventType st
 	if err != nil {
 		return EventSummary{}, fmt.Errorf("get state event: %w", err)
 	}
-	return summarizeEvent(evt), nil
+	return s.summarizeEvent(ctx, evt)
 }
 
 func (s *Service) ListStateEvents(ctx context.Context, roomID string) ([]EventSummary, error) {
@@ -608,7 +802,11 @@ func (s *Service) ListStateEvents(ctx context.Context, roomID string) ([]EventSu
 			if evt == nil {
 				continue
 			}
-			result = append(result, summarizeEvent(evt))
+			summary, err := s.summarizeEvent(ctx, evt)
+			if err != nil {
+				return nil, fmt.Errorf("summarize state event: %w", err)
+			}
+			result = append(result, summary)
 		}
 	}
 	sortEvents(result)
@@ -628,11 +826,19 @@ func (s *Service) ListMessages(ctx context.Context, req ListMessagesRequest) (Me
 	if err != nil {
 		return MessagesResult{}, fmt.Errorf("list room messages: %w", err)
 	}
+	events, err := s.summarizeEvents(ctx, resp.Chunk)
+	if err != nil {
+		return MessagesResult{}, fmt.Errorf("summarize room messages: %w", err)
+	}
+	stateEvents, err := s.summarizeEvents(ctx, resp.State)
+	if err != nil {
+		return MessagesResult{}, fmt.Errorf("summarize room message state: %w", err)
+	}
 	return MessagesResult{
 		Start:  resp.Start,
 		End:    resp.End,
-		Events: summarizeEvents(resp.Chunk),
-		State:  summarizeEvents(resp.State),
+		Events: events,
+		State:  stateEvents,
 	}, nil
 }
 
@@ -641,7 +847,7 @@ func (s *Service) GetEvent(ctx context.Context, roomID string, eventID string) (
 	if err != nil {
 		return EventSummary{}, fmt.Errorf("get event: %w", err)
 	}
-	return summarizeEvent(evt), nil
+	return s.summarizeEvent(ctx, evt)
 }
 
 func (s *Service) GetEventContext(ctx context.Context, roomID string, eventID string, limit int) (EventContextResult, error) {
@@ -652,11 +858,27 @@ func (s *Service) GetEventContext(ctx context.Context, roomID string, eventID st
 	if err != nil {
 		return EventContextResult{}, fmt.Errorf("get event context: %w", err)
 	}
+	center, err := s.summarizeEvent(ctx, resp.Event)
+	if err != nil {
+		return EventContextResult{}, fmt.Errorf("summarize target event: %w", err)
+	}
+	eventsBefore, err := s.summarizeEvents(ctx, resp.EventsBefore)
+	if err != nil {
+		return EventContextResult{}, fmt.Errorf("summarize prior events: %w", err)
+	}
+	eventsAfter, err := s.summarizeEvents(ctx, resp.EventsAfter)
+	if err != nil {
+		return EventContextResult{}, fmt.Errorf("summarize following events: %w", err)
+	}
+	stateEvents, err := s.summarizeEvents(ctx, resp.State)
+	if err != nil {
+		return EventContextResult{}, fmt.Errorf("summarize event context state: %w", err)
+	}
 	return EventContextResult{
-		Event:        summarizeEvent(resp.Event),
-		EventsBefore: summarizeEvents(resp.EventsBefore),
-		EventsAfter:  summarizeEvents(resp.EventsAfter),
-		State:        summarizeEvents(resp.State),
+		Event:        center,
+		EventsBefore: eventsBefore,
+		EventsAfter:  eventsAfter,
+		State:        stateEvents,
 		Start:        resp.Start,
 		End:          resp.End,
 	}, nil
@@ -687,8 +909,12 @@ func (s *Service) ListRelations(ctx context.Context, req ListRelationsRequest) (
 	if err != nil {
 		return RelationsResult{}, fmt.Errorf("list event relations: %w", err)
 	}
+	events, err := s.summarizeEvents(ctx, resp.Chunk)
+	if err != nil {
+		return RelationsResult{}, fmt.Errorf("summarize event relations: %w", err)
+	}
 	return RelationsResult{
-		Events:         summarizeEvents(resp.Chunk),
+		Events:         events,
 		NextBatch:      resp.NextBatch,
 		PrevBatch:      resp.PrevBatch,
 		RecursionDepth: resp.RecursionDepth,
@@ -811,6 +1037,10 @@ func (s *Service) doRoomDirectoryVisibilityRequest(ctx context.Context, method s
 }
 
 func (s *Service) SendText(ctx context.Context, req SendTextRequest) (EventWriteResult, error) {
+	if err := s.ensureRoomSendState(ctx, id.RoomID(req.RoomID)); err != nil {
+		return EventWriteResult{}, fmt.Errorf("prepare room for send: %w", err)
+	}
+
 	var (
 		resp *mautrix.RespSendEvent
 		err  error
@@ -827,9 +1057,17 @@ func (s *Service) SendText(ctx context.Context, req SendTextRequest) (EventWrite
 }
 
 func (s *Service) ReplyText(ctx context.Context, req ReplyTextRequest) (EventWriteResult, error) {
+	if err := s.ensureRoomSendState(ctx, id.RoomID(req.RoomID)); err != nil {
+		return EventWriteResult{}, fmt.Errorf("prepare room for reply: %w", err)
+	}
+
 	original, err := s.client.GetEvent(ctx, id.RoomID(req.RoomID), id.EventID(req.EventID))
 	if err != nil {
 		return EventWriteResult{}, fmt.Errorf("load replied-to event: %w", err)
+	}
+	original, err = s.decryptEvent(ctx, original)
+	if err != nil {
+		return EventWriteResult{}, fmt.Errorf("decrypt replied-to event: %w", err)
 	}
 	content := buildMessageContent(req.Body, req.Notice)
 	content.SetReply(original)
@@ -841,6 +1079,10 @@ func (s *Service) ReplyText(ctx context.Context, req ReplyTextRequest) (EventWri
 }
 
 func (s *Service) EditText(ctx context.Context, req EditTextRequest) (EventWriteResult, error) {
+	if err := s.ensureRoomSendState(ctx, id.RoomID(req.RoomID)); err != nil {
+		return EventWriteResult{}, fmt.Errorf("prepare room for edit: %w", err)
+	}
+
 	content := buildMessageContent(req.Body, req.Notice)
 	content.SetEdit(id.EventID(req.EventID))
 	resp, err := s.client.SendMessageEvent(ctx, id.RoomID(req.RoomID), event.EventMessage, content)
@@ -924,15 +1166,6 @@ func toRoomSummary(resp *mautrix.RespRoomSummary, fallback string) RoomSummary {
 		AllowedRoomIDs:   allowed,
 		Membership:       string(resp.Membership),
 	}
-}
-
-func summarizeEvents(events []*event.Event) []EventSummary {
-	result := make([]EventSummary, 0, len(events))
-	for _, evt := range events {
-		result = append(result, summarizeEvent(evt))
-	}
-	sortEvents(result)
-	return result
 }
 
 func summarizeEvent(evt *event.Event) EventSummary {

@@ -28,6 +28,7 @@ type Server struct {
 	tools  []catalog.ToolMeta
 	mods   []catalog.ModuleMeta
 	scopes scopes.Set
+	close  func() error
 }
 
 func NewFromConfig(ctx context.Context, cfg config.Config) (*Server, error) {
@@ -35,7 +36,9 @@ func NewFromConfig(ctx context.Context, cfg config.Config) (*Server, error) {
 	if err != nil {
 		return nil, err
 	}
-	return New(matrix, cfg.Scopes), nil
+	server := New(matrix, cfg.Scopes)
+	server.close = matrix.Close
+	return server, nil
 }
 
 func New(matrix matrixclient.API, active scopes.Set) *Server {
@@ -56,6 +59,13 @@ func (s *Server) Handler() http.Handler {
 
 func (s *Server) Raw() *mcp.Server {
 	return s.server
+}
+
+func (s *Server) Close() error {
+	if s == nil || s.close == nil {
+		return nil
+	}
+	return s.close()
 }
 
 func (s *Server) registerResources() {

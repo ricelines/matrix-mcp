@@ -26,6 +26,11 @@ func main() {
 	if err != nil {
 		log.Fatalf("connect matrix: %v", err)
 	}
+	defer func() {
+		if err := server.Close(); err != nil {
+			log.Printf("close matrix-mcp: %v", err)
+		}
+	}()
 	httpServer := &http.Server{
 		Addr:              cfg.ListenAddr,
 		Handler:           server.Handler(),
