@@ -44,9 +44,15 @@ var defaultScopes = []Scope{
 	ScopeServerRead,
 	ScopeUsersRead,
 	ScopeRoomsRead,
+	ScopeRoomsAliasRead,
+	ScopeRoomsDirectoryRead,
 	ScopeRoomMembersRead,
 	ScopeRoomStateRead,
 	ScopeTimelineRead,
+	ScopeMessagesSend,
+	ScopeMessagesReply,
+	ScopeMessagesEdit,
+	ScopeMessagesReact,
 }
 
 var allScopes = []Info{

@@ -1,27 +1,27 @@
 # matrix-mcp
 
-`matrix-mcp` is an MCP server for Matrix. You run it against one Matrix account, and an MCP client can then inspect rooms, users, state, and timelines on that account's behalf. If you enable additional scopes, it can also resolve or manage room aliases, inspect or change room-directory visibility, create users, create or join rooms, invite or remove users from rooms, and send or modify messages.
+`matrix-mcp` is an MCP server for Matrix. You run it against one Matrix account, and an MCP client can then inspect rooms, users, state, and timelines on that account's behalf. The default scope set also includes the core messaging actions most agents need: sending, replying, editing, and reacting. If you enable additional scopes, it can also create users, create or join rooms, invite or remove users from rooms, redact messages, and manage aliases or room-directory visibility.
 
 This server is for people who want Matrix available as a tool surface inside an MCP-capable workflow. It is not a Matrix bridge and it is not a multi-user service. Everything it does is done as the configured Matrix account.
 
 ## What you get
 
-Out of the box, the server exposes read-oriented Matrix tools for:
+Out of the box, the server exposes agent-oriented Matrix tools for:
 
 - active client identity and readiness
 - homeserver versions and capabilities
 - user search, profile lookup, and registration availability checks
 - room listing, room summary lookup, and room preview
+- room alias resolution and room-directory visibility lookup
 - joined-member lookup
 - room state lookup
 - timeline pagination, event fetch, event context, and relation inspection
+- sending messages
+- replying to messages
+- editing messages
+- reacting to events
 
-If you opt into additional room metadata scopes, it can also:
-
-- resolve room aliases
-- inspect room-directory visibility
-
-If you opt into write scopes, it can also:
+If you opt into additional scopes, it can also:
 
 - create Matrix users
 - create rooms
@@ -68,7 +68,7 @@ export MATRIX_PASSWORD='replace-me'
 go run ./cmd/matrix-mcp-server
 ```
 
-By default the server listens on `:8080` and exposes only the default read-oriented scopes.
+By default the server listens on `:8080` and exposes the default agent-oriented scopes.
 
 The MCP endpoint is the server root over HTTP, for example:
 
@@ -196,14 +196,15 @@ If `MATRIX_MCP_SCOPES` is empty or unset, the server enables this default set:
 - `server.read`
 - `users.read`
 - `rooms.read`
+- `rooms.alias.read`
+- `rooms.directory.read`
 - `room.members.read`
 - `room.state.read`
 - `timeline.read`
-
-Additional optional read scopes unlock room alias and room-directory inspection:
-
-- `rooms.alias.read`
-- `rooms.directory.read`
+- `messages.send`
+- `messages.reply`
+- `messages.edit`
+- `messages.react`
 
 Additional write scopes unlock mutations:
 
@@ -220,22 +221,18 @@ Additional write scopes unlock mutations:
 - `messages.react`
 - `messages.redact`
 
-`default` is a special token that expands to the default read set, so these are valid:
+`default` is a special token that expands to that baseline set, so these are valid:
 
 - `default`
-- `default,messages.send`
-- `default,rooms.alias.read,rooms.directory.read`
+- `default,messages.redact`
 - `default,rooms.create,rooms.alias.write,rooms.directory.write,rooms.join,rooms.invite,rooms.leave,messages.send`
-
-If you want a read-only deployment, leave `MATRIX_MCP_SCOPES` unset.
 
 ## Choosing scopes
 
 Reasonable starting points:
 
-- Read-only assistant: `default`
-- Read-only assistant that can inspect aliases and room-directory visibility: `default,rooms.alias.read,rooms.directory.read`
-- Messaging bot in existing rooms: `default,messages.send,messages.reply,messages.edit,messages.react`
+- General-purpose agent: `default`
+- Agent with redaction power: `default,messages.redact`
 - Room-management bot: `default,rooms.alias.read,rooms.directory.read,rooms.create,rooms.alias.write,rooms.directory.write,rooms.join,rooms.invite,rooms.leave,messages.send`
 - Provisioning workflow that can create accounts: `default,users.create`
 

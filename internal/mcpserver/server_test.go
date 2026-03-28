@@ -300,20 +300,23 @@ func TestScopeFiltering(t *testing.T) {
 	if !seen["matrix.v1.timeline.messages.list"] {
 		t.Fatal("timeline read tool missing from default scope set")
 	}
-	if seen["matrix.v1.rooms.alias.get"] || seen["matrix.v1.rooms.directory.get"] {
-		t.Fatal("room alias/directory read tools should not be available without their read scopes")
+	if !seen["matrix.v1.rooms.alias.get"] || !seen["matrix.v1.rooms.directory.get"] {
+		t.Fatal("room alias/directory read tools missing from default scope set")
 	}
 	if seen["matrix.v1.users.create"] {
 		t.Fatal("users.create should not be available without users.create scope")
 	}
-	if seen["matrix.v1.messages.send_text"] {
-		t.Fatal("messages.send_text should not be available without messages.send scope")
+	if !seen["matrix.v1.messages.send_text"] || !seen["matrix.v1.messages.reply_text"] || !seen["matrix.v1.messages.edit_text"] || !seen["matrix.v1.messages.react"] {
+		t.Fatal("core messaging tools missing from default scope set")
 	}
 	if seen["matrix.v1.rooms.invite"] {
 		t.Fatal("rooms.invite should not be available without rooms.invite scope")
 	}
 	if seen["matrix.v1.rooms.leave"] {
 		t.Fatal("rooms.leave should not be available without rooms.leave scope")
+	}
+	if seen["matrix.v1.messages.redact"] {
+		t.Fatal("messages.redact should not be available without messages.redact scope")
 	}
 	if seen["matrix.v1.rooms.alias.create"] || seen["matrix.v1.rooms.directory.publish"] {
 		t.Fatal("room alias/directory write tools should not be available without their write scopes")
@@ -864,7 +867,7 @@ func TestRoomAliasAndDirectoryTools(t *testing.T) {
 }
 
 func TestMessageMutationTools(t *testing.T) {
-	active, err := scopes.Parse("default,messages.send,messages.reply,messages.edit,messages.react,messages.redact")
+	active, err := scopes.Parse("default,messages.redact")
 	if err != nil {
 		t.Fatalf("Parse() error = %v", err)
 	}

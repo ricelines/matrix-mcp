@@ -18,11 +18,17 @@ func TestParseDefaultExpansion(t *testing.T) {
 			t.Fatalf("expected default scope %q to be enabled", scope)
 		}
 	}
-	if parsed.Allows(ScopeRoomsAliasRead) || parsed.Allows(ScopeRoomsDirectoryRead) {
-		t.Fatal("default scopes should not enable alias or directory reads")
-	}
 	if parsed.Allows(ScopeRoomsAliasWrite) || parsed.Allows(ScopeRoomsDirectoryWrite) {
 		t.Fatal("default scopes should not enable alias or directory writes")
+	}
+	if parsed.Allows(ScopeUsersCreate) && !parsed.Allows(ScopeUsersRead) {
+		t.Fatal("users.create should not replace baseline user reads")
+	}
+	if parsed.Allows(ScopeRoomsCreate) || parsed.Allows(ScopeRoomsJoin) || parsed.Allows(ScopeRoomsInvite) || parsed.Allows(ScopeRoomsLeave) {
+		t.Fatal("default scopes should not enable room topology mutations")
+	}
+	if parsed.Allows(ScopeMessagesRedact) {
+		t.Fatal("default scopes should not enable redactions")
 	}
 }
 

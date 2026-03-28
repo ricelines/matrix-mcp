@@ -14,7 +14,7 @@
       scopes: {
         type: "string",
         default: "default",
-        description: "Comma-separated scope list. Available scopes: client.identity.read, client.status.read, server.read, users.read, users.create, rooms.read, rooms.alias.read, rooms.directory.read, rooms.create, rooms.alias.write, rooms.directory.write, rooms.join, rooms.invite, rooms.leave, room.members.read, room.state.read, timeline.read, messages.send, messages.reply, messages.edit, messages.react, messages.redact. The special value default expands to: client.identity.read, client.status.read, server.read, users.read, rooms.read, room.members.read, room.state.read, timeline.read.",
+        description: "Comma-separated scope list. Available scopes: client.identity.read, client.status.read, server.read, users.read, users.create, rooms.read, rooms.alias.read, rooms.directory.read, rooms.create, rooms.alias.write, rooms.directory.write, rooms.join, rooms.invite, rooms.leave, room.members.read, room.state.read, timeline.read, messages.send, messages.reply, messages.edit, messages.react, messages.redact. The special value default expands to: client.identity.read, client.status.read, server.read, users.read, rooms.read, rooms.alias.read, rooms.directory.read, room.members.read, room.state.read, timeline.read, messages.send, messages.reply, messages.edit, messages.react.",
       },
       listen_addr: { type: "string", default: ":8080" },
     },
