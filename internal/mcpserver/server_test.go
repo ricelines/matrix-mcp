@@ -42,10 +42,15 @@ type fakeMatrix struct {
 	reactionMessage   matrixclient.EventWriteResult
 	redactionMessage  matrixclient.EventWriteResult
 	lastCreateUser    matrixclient.CreateUserRequest
+	lastDisplayName   string
+	lastAvatarURL     string
+	lastPresence      matrixclient.SetPresenceRequest
 	lastCreateRoom    matrixclient.CreateRoomRequest
 	lastJoinRoom      matrixclient.JoinRoomRequest
 	lastInviteRoom    matrixclient.InviteRoomMemberRequest
 	lastLeaveRoom     matrixclient.LeaveRoomRequest
+	lastTyping        matrixclient.SetTypingRequest
+	lastReadMarkers   matrixclient.SetReadMarkersRequest
 	lastCreateAlias   matrixclient.CreateRoomAliasRequest
 	lastDeleteAlias   string
 	lastDirectoryGet  string
@@ -94,6 +99,18 @@ func (f *fakeMatrix) GetProfile(ctx context.Context, userID string) (matrixclien
 		return matrixclient.UserProfile{}, errors.New("not found")
 	}
 	return profile, nil
+}
+func (f *fakeMatrix) SetDisplayName(ctx context.Context, displayName string) error {
+	f.lastDisplayName = displayName
+	return nil
+}
+func (f *fakeMatrix) SetAvatarURL(ctx context.Context, avatarURL string) error {
+	f.lastAvatarURL = avatarURL
+	return nil
+}
+func (f *fakeMatrix) SetPresence(ctx context.Context, req matrixclient.SetPresenceRequest) error {
+	f.lastPresence = req
+	return nil
 }
 func (f *fakeMatrix) ListRooms(ctx context.Context) ([]matrixclient.RoomSummary, error) {
 	return f.rooms, nil
@@ -197,6 +214,14 @@ func (f *fakeMatrix) InviteRoomMember(ctx context.Context, req matrixclient.Invi
 func (f *fakeMatrix) LeaveRoom(ctx context.Context, req matrixclient.LeaveRoomRequest) (matrixclient.LeaveRoomResult, error) {
 	f.lastLeaveRoom = req
 	return matrixclient.LeaveRoomResult{RoomID: req.RoomID}, nil
+}
+func (f *fakeMatrix) SetTyping(ctx context.Context, req matrixclient.SetTypingRequest) error {
+	f.lastTyping = req
+	return nil
+}
+func (f *fakeMatrix) SetReadMarkers(ctx context.Context, req matrixclient.SetReadMarkersRequest) error {
+	f.lastReadMarkers = req
+	return nil
 }
 func (f *fakeMatrix) CreateRoomAlias(ctx context.Context, req matrixclient.CreateRoomAliasRequest) (matrixclient.CreateRoomAliasResult, error) {
 	f.lastCreateAlias = req
@@ -309,6 +334,9 @@ func TestScopeFiltering(t *testing.T) {
 	if !seen["matrix.v1.messages.send_text"] || !seen["matrix.v1.messages.reply_text"] || !seen["matrix.v1.messages.edit_text"] || !seen["matrix.v1.messages.react"] {
 		t.Fatal("core messaging tools missing from default scope set")
 	}
+	if seen["matrix.v1.client.profile.set_display_name"] || seen["matrix.v1.client.presence.set"] || seen["matrix.v1.rooms.typing.set"] || seen["matrix.v1.rooms.read_markers.set"] {
+		t.Fatal("safe opt-in tools should not be available without the safe scope set")
+	}
 	if seen["matrix.v1.rooms.invite"] {
 		t.Fatal("rooms.invite should not be available without rooms.invite scope")
 	}
@@ -351,6 +379,34 @@ func TestAliasAndDirectoryScopeFiltering(t *testing.T) {
 	}
 	if seen["matrix.v1.rooms.create"] {
 		t.Fatal("rooms.create should not be available without rooms.create scope")
+	}
+}
+
+func TestSafeScopeFiltering(t *testing.T) {
+	backend := &fakeMatrix{}
+	active, err := scopes.Parse("default,safe")
+	if err != nil {
+		t.Fatalf("Parse() error = %v", err)
+	}
+	server := New(backend, active)
+	session := connectTestSession(t, server)
+
+	tools, err := session.ListTools(context.Background(), nil)
+	if err != nil {
+		t.Fatalf("ListTools() error = %v", err)
+	}
+	seen := map[string]bool{}
+	for _, tool := range tools.Tools {
+		seen[tool.Name] = true
+	}
+	if !seen["matrix.v1.client.profile.set_display_name"] || !seen["matrix.v1.client.profile.set_avatar_url"] || !seen["matrix.v1.client.presence.set"] {
+		t.Fatal("client safe tools missing despite explicit safe scope set")
+	}
+	if !seen["matrix.v1.rooms.typing.set"] || !seen["matrix.v1.rooms.read_markers.set"] {
+		t.Fatal("room safe tools missing despite explicit safe scope set")
+	}
+	if seen["matrix.v1.rooms.create"] || seen["matrix.v1.messages.redact"] {
+		t.Fatal("safe scope set should not unlock privileged room or message mutation tools")
 	}
 }
 
@@ -492,6 +548,52 @@ func TestClientAndServerTools(t *testing.T) {
 	}
 	if structuredMap(t, caps)["capabilities"] == nil {
 		t.Fatalf("unexpected capabilities payload = %#v", structuredMap(t, caps))
+	}
+}
+
+func TestClientSafeTools(t *testing.T) {
+	active, err := scopes.Parse("default,safe")
+	if err != nil {
+		t.Fatalf("Parse() error = %v", err)
+	}
+	backend := &fakeMatrix{
+		identity: matrixclient.Identity{UserID: "@bot:example.com", DeviceID: "DEVICE", HomeserverURL: "http://example.com"},
+	}
+	server := New(backend, active)
+	session := connectTestSession(t, server)
+	ctx := context.Background()
+
+	displayName, err := session.CallTool(ctx, &mcp.CallToolParams{
+		Name:      "matrix.v1.client.profile.set_display_name",
+		Arguments: map[string]any{"display_name": "Release Bot"},
+	})
+	if err != nil {
+		t.Fatalf("client.profile.set_display_name error = %v", err)
+	}
+	if structuredMap(t, displayName)["display_name"] != "Release Bot" || backend.lastDisplayName != "Release Bot" {
+		t.Fatalf("unexpected display name payload / request = %#v / %q", structuredMap(t, displayName), backend.lastDisplayName)
+	}
+
+	avatar, err := session.CallTool(ctx, &mcp.CallToolParams{
+		Name:      "matrix.v1.client.profile.set_avatar_url",
+		Arguments: map[string]any{"avatar_url": "mxc://example.com/bot"},
+	})
+	if err != nil {
+		t.Fatalf("client.profile.set_avatar_url error = %v", err)
+	}
+	if structuredMap(t, avatar)["avatar_url"] != "mxc://example.com/bot" || backend.lastAvatarURL != "mxc://example.com/bot" {
+		t.Fatalf("unexpected avatar payload / request = %#v / %q", structuredMap(t, avatar), backend.lastAvatarURL)
+	}
+
+	presence, err := session.CallTool(ctx, &mcp.CallToolParams{
+		Name:      "matrix.v1.client.presence.set",
+		Arguments: map[string]any{"presence": "unavailable", "status_msg": "triaging"},
+	})
+	if err != nil {
+		t.Fatalf("client.presence.set error = %v", err)
+	}
+	if structuredMap(t, presence)["presence"] != "unavailable" || backend.lastPresence.Presence != "unavailable" || backend.lastPresence.StatusMsg != "triaging" {
+		t.Fatalf("unexpected presence payload / request = %#v / %#v", structuredMap(t, presence), backend.lastPresence)
 	}
 }
 
@@ -789,6 +891,45 @@ func TestRoomLeaveTool(t *testing.T) {
 	}
 	if backend.lastLeaveRoom.RoomID != "!joined:example.com" || backend.lastLeaveRoom.Reason != "handoff complete" {
 		t.Fatalf("unexpected rooms.leave request = %#v", backend.lastLeaveRoom)
+	}
+}
+
+func TestRoomSafeTools(t *testing.T) {
+	active, err := scopes.Parse("default,safe")
+	if err != nil {
+		t.Fatalf("Parse() error = %v", err)
+	}
+	backend := &fakeMatrix{}
+	server := New(backend, active)
+	session := connectTestSession(t, server)
+	ctx := context.Background()
+
+	typing, err := session.CallTool(ctx, &mcp.CallToolParams{
+		Name:      "matrix.v1.rooms.typing.set",
+		Arguments: map[string]any{"room_id": "!joined:example.com", "typing": true},
+	})
+	if err != nil {
+		t.Fatalf("rooms.typing.set error = %v", err)
+	}
+	if structuredMap(t, typing)["timeout_ms"] != float64(30000) || backend.lastTyping.TimeoutMS != 30000 {
+		t.Fatalf("unexpected rooms.typing.set payload / request = %#v / %#v", structuredMap(t, typing), backend.lastTyping)
+	}
+
+	readMarkers, err := session.CallTool(ctx, &mcp.CallToolParams{
+		Name: "matrix.v1.rooms.read_markers.set",
+		Arguments: map[string]any{
+			"room_id":               "!joined:example.com",
+			"read_event_id":         "$public",
+			"private_read_event_id": "$private",
+			"fully_read_event_id":   "$full",
+		},
+	})
+	if err != nil {
+		t.Fatalf("rooms.read_markers.set error = %v", err)
+	}
+	payload := structuredMap(t, readMarkers)
+	if payload["fully_read_event_id"] != "$full" || backend.lastReadMarkers.PrivateReadEventID != "$private" {
+		t.Fatalf("unexpected rooms.read_markers.set payload / request = %#v / %#v", payload, backend.lastReadMarkers)
 	}
 }
 

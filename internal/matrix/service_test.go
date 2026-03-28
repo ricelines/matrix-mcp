@@ -281,6 +281,114 @@ func TestRoomDirectoryVisibilityOperations(t *testing.T) {
 	}
 }
 
+func TestSafeOptInOperations(t *testing.T) {
+	var calls int
+	svc := newClientTestService(t, func(r *http.Request) *http.Response {
+		calls++
+		switch calls {
+		case 1:
+			if got, want := r.URL.EscapedPath(), "/_matrix/client/v3/profile/@bot:example.com/displayname"; got != want {
+				t.Fatalf("path = %s, want %s", got, want)
+			}
+			if r.Method != http.MethodPut {
+				t.Fatalf("method = %s, want PUT", r.Method)
+			}
+			var payload map[string]any
+			if err := json.NewDecoder(r.Body).Decode(&payload); err != nil {
+				t.Fatalf("decode request: %v", err)
+			}
+			if payload["displayname"] != "Release Bot" {
+				t.Fatalf("unexpected display name payload: %#v", payload)
+			}
+			return jsonResponse(t, r, http.StatusOK, map[string]any{})
+		case 2:
+			if got, want := r.URL.EscapedPath(), "/_matrix/client/v3/profile/@bot:example.com/avatar_url"; got != want {
+				t.Fatalf("path = %s, want %s", got, want)
+			}
+			if r.Method != http.MethodPut {
+				t.Fatalf("method = %s, want PUT", r.Method)
+			}
+			var payload map[string]any
+			if err := json.NewDecoder(r.Body).Decode(&payload); err != nil {
+				t.Fatalf("decode request: %v", err)
+			}
+			if payload["avatar_url"] != "mxc://example.com/bot" {
+				t.Fatalf("unexpected avatar payload: %#v", payload)
+			}
+			return jsonResponse(t, r, http.StatusOK, map[string]any{})
+		case 3:
+			if got, want := r.URL.EscapedPath(), "/_matrix/client/v3/presence/@bot:example.com/status"; got != want {
+				t.Fatalf("path = %s, want %s", got, want)
+			}
+			if r.Method != http.MethodPut {
+				t.Fatalf("method = %s, want PUT", r.Method)
+			}
+			var payload map[string]any
+			if err := json.NewDecoder(r.Body).Decode(&payload); err != nil {
+				t.Fatalf("decode request: %v", err)
+			}
+			if payload["presence"] != "unavailable" || payload["status_msg"] != "triaging" {
+				t.Fatalf("unexpected presence payload: %#v", payload)
+			}
+			return jsonResponse(t, r, http.StatusOK, map[string]any{})
+		case 4:
+			if got, want := r.URL.EscapedPath(), "/_matrix/client/v3/rooms/%21welcome:example.com/typing/@bot:example.com"; got != want {
+				t.Fatalf("path = %s, want %s", got, want)
+			}
+			if r.Method != http.MethodPut {
+				t.Fatalf("method = %s, want PUT", r.Method)
+			}
+			var payload map[string]any
+			if err := json.NewDecoder(r.Body).Decode(&payload); err != nil {
+				t.Fatalf("decode request: %v", err)
+			}
+			if payload["typing"] != true || payload["timeout"] != float64(15000) {
+				t.Fatalf("unexpected typing payload: %#v", payload)
+			}
+			return jsonResponse(t, r, http.StatusOK, map[string]any{})
+		case 5:
+			if got, want := r.URL.EscapedPath(), "/_matrix/client/v3/rooms/%21welcome:example.com/read_markers"; got != want {
+				t.Fatalf("path = %s, want %s", got, want)
+			}
+			if r.Method != http.MethodPost {
+				t.Fatalf("method = %s, want POST", r.Method)
+			}
+			var payload map[string]any
+			if err := json.NewDecoder(r.Body).Decode(&payload); err != nil {
+				t.Fatalf("decode request: %v", err)
+			}
+			if payload["m.read"] != "$public" || payload["m.read.private"] != "$private" || payload["m.fully_read"] != "$full" {
+				t.Fatalf("unexpected read markers payload: %#v", payload)
+			}
+			return jsonResponse(t, r, http.StatusOK, map[string]any{})
+		default:
+			t.Fatalf("unexpected safe operation call %d", calls)
+			return nil
+		}
+	})
+
+	if err := svc.SetDisplayName(context.Background(), "Release Bot"); err != nil {
+		t.Fatalf("SetDisplayName() error = %v", err)
+	}
+	if err := svc.SetAvatarURL(context.Background(), "mxc://example.com/bot"); err != nil {
+		t.Fatalf("SetAvatarURL() error = %v", err)
+	}
+	if err := svc.SetPresence(context.Background(), SetPresenceRequest{Presence: "unavailable", StatusMsg: "triaging"}); err != nil {
+		t.Fatalf("SetPresence() error = %v", err)
+	}
+	if err := svc.SetTyping(context.Background(), SetTypingRequest{RoomID: "!welcome:example.com", Typing: true, TimeoutMS: 15000}); err != nil {
+		t.Fatalf("SetTyping() error = %v", err)
+	}
+	if err := svc.SetReadMarkers(context.Background(), SetReadMarkersRequest{
+		RoomID:             "!welcome:example.com",
+		ReadEventID:        "$public",
+		PrivateReadEventID: "$private",
+		FullyReadEventID:   "$full",
+	}); err != nil {
+		t.Fatalf("SetReadMarkers() error = %v", err)
+	}
+}
+
 func TestSummarizeEventRejectsEncryptedEventWithoutE2EE(t *testing.T) {
 	svc := &Service{}
 

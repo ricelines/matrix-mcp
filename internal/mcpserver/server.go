@@ -219,6 +219,10 @@ func (s *Server) renderScopes() string {
 	for _, name := range scopes.DefaultNames() {
 		fmt.Fprintf(&out, "- `%s`\n", name)
 	}
+	out.WriteString("\n## Safe scope expansion\n")
+	for _, name := range scopes.SafeNames() {
+		fmt.Fprintf(&out, "- `%s`\n", name)
+	}
 	out.WriteString("\n## Available scopes\n")
 	for _, info := range scopes.Available() {
 		fmt.Fprintf(&out, "- `%s`: %s\n", info.Name, info.Description)

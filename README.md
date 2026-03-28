@@ -1,6 +1,6 @@
 # matrix-mcp
 
-`matrix-mcp` is an MCP server for Matrix. You run it against one Matrix account, and an MCP client can then inspect rooms, users, state, and timelines on that account's behalf. The default scope set also includes the core messaging actions most agents need: sending, replying, editing, and reacting. If you enable additional scopes, it can also create users, create or join rooms, invite or remove users from rooms, redact messages, and manage aliases or room-directory visibility.
+`matrix-mcp` is an MCP server for Matrix. You run it against one Matrix account, and an MCP client can then inspect rooms, users, state, and timelines on that account's behalf. The default scope set also includes the core messaging actions most agents need: sending, replying, editing, and reacting. If you enable additional scopes, it can also update the bot's own profile or presence, publish typing and read-marker state, create users, create or join rooms, invite or remove users from rooms, redact messages, and manage aliases or room-directory visibility.
 
 This server is for people who want Matrix available as a tool surface inside an MCP-capable workflow. It is not a Matrix bridge and it is not a multi-user service. Everything it does is done as the configured Matrix account.
 
@@ -23,6 +23,11 @@ Out of the box, the server exposes agent-oriented Matrix tools for:
 
 If you opt into additional scopes, it can also:
 
+- set or clear the active account display name
+- set or clear the active account avatar URL
+- set the active account presence and status message
+- set typing state in rooms
+- set read receipts and fully-read markers in rooms
 - create Matrix users
 - create rooms
 - create or delete room aliases
@@ -175,14 +180,14 @@ Optional environment variables:
 - `MATRIX_REGISTRATION_TOKEN`: registration token used by `matrix.v1.users.create` on homeservers that require `m.login.registration_token`
 - `MATRIX_MCP_SCOPES`: comma-separated scope list, default `default`
 
-Example with explicit listen address and write capabilities:
+Example with explicit listen address, the safe opt-in set, and additional write capabilities:
 
 ```bash
 export MATRIX_HOMESERVER_URL='https://matrix.example.com'
 export MATRIX_USERNAME='matrix-bot'
 export MATRIX_PASSWORD='replace-me'
 export MATRIX_MCP_LISTEN_ADDR='127.0.0.1:8080'
-export MATRIX_MCP_SCOPES='default,rooms.alias.read,rooms.directory.read,users.create,rooms.create,rooms.alias.write,rooms.directory.write,rooms.join,rooms.invite,rooms.leave,messages.send,messages.reply,messages.edit,messages.react,messages.redact'
+export MATRIX_MCP_SCOPES='default,safe,users.create,rooms.create,rooms.alias.write,rooms.directory.write,rooms.join,rooms.invite,rooms.leave,messages.redact'
 
 go run ./cmd/matrix-mcp-server
 ```
@@ -208,6 +213,8 @@ If `MATRIX_MCP_SCOPES` is empty or unset, the server enables this default set:
 
 Additional write scopes unlock mutations:
 
+- `client.profile.write`
+- `client.presence.write`
 - `users.create`
 - `rooms.create`
 - `rooms.alias.write`
@@ -215,23 +222,34 @@ Additional write scopes unlock mutations:
 - `rooms.join`
 - `rooms.invite`
 - `rooms.leave`
+- `rooms.typing.write`
+- `rooms.read_markers.write`
 - `messages.send`
 - `messages.reply`
 - `messages.edit`
 - `messages.react`
 - `messages.redact`
 
-`default` is a special token that expands to that baseline set, so these are valid:
+`default` is a special token that expands to that baseline set. `safe` is a special token that expands to the low-blast-radius opt-in set:
+
+- `client.profile.write`
+- `client.presence.write`
+- `rooms.typing.write`
+- `rooms.read_markers.write`
+
+These are all valid:
 
 - `default`
+- `default,safe`
 - `default,messages.redact`
-- `default,rooms.create,rooms.alias.write,rooms.directory.write,rooms.join,rooms.invite,rooms.leave,messages.send`
+- `default,safe,rooms.create,rooms.alias.write,rooms.directory.write,rooms.join,rooms.invite,rooms.leave`
 
 ## Choosing scopes
 
 Reasonable starting points:
 
 - General-purpose agent: `default`
+- General-purpose agent with self-profile and room-activity state: `default,safe`
 - Agent with redaction power: `default,messages.redact`
 - Room-management bot: `default,rooms.alias.read,rooms.directory.read,rooms.create,rooms.alias.write,rooms.directory.write,rooms.join,rooms.invite,rooms.leave,messages.send`
 - Provisioning workflow that can create accounts: `default,users.create`
@@ -242,10 +260,10 @@ Avoid granting write scopes just because they exist. The point of the scope mode
 
 The server currently exposes tools under these module groups:
 
-- `client`: who the server is logged in as, and whether that session is active
+- `client`: who the server is logged in as, whether that session is active, and, when the corresponding scopes are enabled, self-profile and presence updates
 - `server`: homeserver versions and capability metadata
 - `users`: username availability, directory search, profile lookup, and optional user creation
-- `rooms`: list joined rooms, inspect or preview a room, and, when the corresponding scopes are enabled, resolve or manage room aliases, inspect or manage room-directory visibility, create or join rooms, invite users, and leave rooms
+- `rooms`: list joined rooms, inspect or preview a room, and, when the corresponding scopes are enabled, set typing or read markers, resolve or manage room aliases, inspect or manage room-directory visibility, create or join rooms, invite users, and leave rooms
 - `room.members`: list or fetch joined members in a room
 - `room.state`: fetch one state event or list visible state in a room
 - `timeline`: paginate messages, fetch an event, inspect context around an event, list relations such as reactions or edits

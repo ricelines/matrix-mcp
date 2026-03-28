@@ -14,28 +14,32 @@ type Info struct {
 }
 
 const (
-	ScopeClientIdentityRead  Scope = "client.identity.read"
-	ScopeClientStatusRead    Scope = "client.status.read"
-	ScopeServerRead          Scope = "server.read"
-	ScopeUsersRead           Scope = "users.read"
-	ScopeUsersCreate         Scope = "users.create"
-	ScopeRoomsRead           Scope = "rooms.read"
-	ScopeRoomsAliasRead      Scope = "rooms.alias.read"
-	ScopeRoomsDirectoryRead  Scope = "rooms.directory.read"
-	ScopeRoomsCreate         Scope = "rooms.create"
-	ScopeRoomsAliasWrite     Scope = "rooms.alias.write"
-	ScopeRoomsDirectoryWrite Scope = "rooms.directory.write"
-	ScopeRoomsJoin           Scope = "rooms.join"
-	ScopeRoomsInvite         Scope = "rooms.invite"
-	ScopeRoomsLeave          Scope = "rooms.leave"
-	ScopeRoomMembersRead     Scope = "room.members.read"
-	ScopeRoomStateRead       Scope = "room.state.read"
-	ScopeTimelineRead        Scope = "timeline.read"
-	ScopeMessagesSend        Scope = "messages.send"
-	ScopeMessagesReply       Scope = "messages.reply"
-	ScopeMessagesEdit        Scope = "messages.edit"
-	ScopeMessagesReact       Scope = "messages.react"
-	ScopeMessagesRedact      Scope = "messages.redact"
+	ScopeClientIdentityRead    Scope = "client.identity.read"
+	ScopeClientStatusRead      Scope = "client.status.read"
+	ScopeClientProfileWrite    Scope = "client.profile.write"
+	ScopeClientPresenceWrite   Scope = "client.presence.write"
+	ScopeServerRead            Scope = "server.read"
+	ScopeUsersRead             Scope = "users.read"
+	ScopeUsersCreate           Scope = "users.create"
+	ScopeRoomsRead             Scope = "rooms.read"
+	ScopeRoomsAliasRead        Scope = "rooms.alias.read"
+	ScopeRoomsDirectoryRead    Scope = "rooms.directory.read"
+	ScopeRoomsCreate           Scope = "rooms.create"
+	ScopeRoomsAliasWrite       Scope = "rooms.alias.write"
+	ScopeRoomsDirectoryWrite   Scope = "rooms.directory.write"
+	ScopeRoomsJoin             Scope = "rooms.join"
+	ScopeRoomsInvite           Scope = "rooms.invite"
+	ScopeRoomsLeave            Scope = "rooms.leave"
+	ScopeRoomsTypingWrite      Scope = "rooms.typing.write"
+	ScopeRoomsReadMarkersWrite Scope = "rooms.read_markers.write"
+	ScopeRoomMembersRead       Scope = "room.members.read"
+	ScopeRoomStateRead         Scope = "room.state.read"
+	ScopeTimelineRead          Scope = "timeline.read"
+	ScopeMessagesSend          Scope = "messages.send"
+	ScopeMessagesReply         Scope = "messages.reply"
+	ScopeMessagesEdit          Scope = "messages.edit"
+	ScopeMessagesReact         Scope = "messages.react"
+	ScopeMessagesRedact        Scope = "messages.redact"
 )
 
 var defaultScopes = []Scope{
@@ -55,9 +59,23 @@ var defaultScopes = []Scope{
 	ScopeMessagesReact,
 }
 
+var safeOptInScopes = []Scope{
+	ScopeClientProfileWrite,
+	ScopeClientPresenceWrite,
+	ScopeRoomsTypingWrite,
+	ScopeRoomsReadMarkersWrite,
+}
+
+var namedSets = map[string][]Scope{
+	"default": defaultScopes,
+	"safe":    safeOptInScopes,
+}
+
 var allScopes = []Info{
 	{Name: ScopeClientIdentityRead, Description: "Read the active Matrix client identity."},
 	{Name: ScopeClientStatusRead, Description: "Read Matrix client readiness and login status."},
+	{Name: ScopeClientProfileWrite, Description: "Set or clear the active Matrix account display name and avatar URL."},
+	{Name: ScopeClientPresenceWrite, Description: "Set the active Matrix account presence and status message."},
 	{Name: ScopeServerRead, Description: "Read homeserver versions, capabilities, and feature metadata."},
 	{Name: ScopeUsersRead, Description: "Search users, inspect profiles, and check username availability."},
 	{Name: ScopeUsersCreate, Description: "Create new users through the homeserver registration API."},
@@ -70,6 +88,8 @@ var allScopes = []Info{
 	{Name: ScopeRoomsJoin, Description: "Join rooms by room ID or alias."},
 	{Name: ScopeRoomsInvite, Description: "Invite users into existing rooms."},
 	{Name: ScopeRoomsLeave, Description: "Leave rooms the active account is currently joined to."},
+	{Name: ScopeRoomsTypingWrite, Description: "Set the active account typing state in a room."},
+	{Name: ScopeRoomsReadMarkersWrite, Description: "Set read receipts and fully-read markers for the active account in a room."},
 	{Name: ScopeRoomMembersRead, Description: "Read joined-member information for a room."},
 	{Name: ScopeRoomStateRead, Description: "Read room state events."},
 	{Name: ScopeTimelineRead, Description: "Read room timelines, events, context, and relations."},
@@ -103,8 +123,8 @@ func Parse(raw string) (Set, error) {
 		if name == "" {
 			continue
 		}
-		if name == "default" {
-			for _, scope := range defaultScopes {
+		if expanded, ok := namedSets[name]; ok {
+			for _, scope := range expanded {
 				allowed[scope] = struct{}{}
 			}
 			continue
@@ -144,6 +164,14 @@ func Available() []Info {
 func DefaultNames() []string {
 	result := make([]string, 0, len(defaultScopes))
 	for _, scope := range defaultScopes {
+		result = append(result, string(scope))
+	}
+	return result
+}
+
+func SafeNames() []string {
+	result := make([]string, 0, len(safeOptInScopes))
+	for _, scope := range safeOptInScopes {
 		result = append(result, string(scope))
 	}
 	return result

@@ -55,6 +55,11 @@ type UserProfile struct {
 	AvatarURL   string `json:"avatar_url,omitempty"`
 }
 
+type SetPresenceRequest struct {
+	Presence  string
+	StatusMsg string
+}
+
 type CreateUserRequest struct {
 	Username                 string
 	Password                 string
@@ -144,6 +149,19 @@ type LeaveRoomRequest struct {
 
 type LeaveRoomResult struct {
 	RoomID string `json:"room_id"`
+}
+
+type SetTypingRequest struct {
+	RoomID    string
+	Typing    bool
+	TimeoutMS int64
+}
+
+type SetReadMarkersRequest struct {
+	RoomID             string
+	ReadEventID        string
+	PrivateReadEventID string
+	FullyReadEventID   string
 }
 
 type CreateRoomAliasRequest struct {
@@ -268,6 +286,9 @@ type API interface {
 	CreateUser(context.Context, CreateUserRequest) (CreateUserResult, error)
 	SearchUsers(context.Context, string, int) ([]SearchUser, bool, error)
 	GetProfile(context.Context, string) (UserProfile, error)
+	SetDisplayName(context.Context, string) error
+	SetAvatarURL(context.Context, string) error
+	SetPresence(context.Context, SetPresenceRequest) error
 	ListRooms(context.Context) ([]RoomSummary, error)
 	GetRoom(context.Context, string) (RoomSummary, error)
 	PreviewRoom(context.Context, string, []string) (RoomSummary, error)
@@ -283,6 +304,8 @@ type API interface {
 	JoinRoom(context.Context, JoinRoomRequest) (JoinRoomResult, error)
 	InviteRoomMember(context.Context, InviteRoomMemberRequest) (InviteRoomMemberResult, error)
 	LeaveRoom(context.Context, LeaveRoomRequest) (LeaveRoomResult, error)
+	SetTyping(context.Context, SetTypingRequest) error
+	SetReadMarkers(context.Context, SetReadMarkersRequest) error
 	CreateRoomAlias(context.Context, CreateRoomAliasRequest) (CreateRoomAliasResult, error)
 	GetRoomAlias(context.Context, string) (RoomAliasResult, error)
 	DeleteRoomAlias(context.Context, string) (DeleteRoomAliasResult, error)
@@ -718,6 +741,48 @@ func (s *Service) GetProfile(ctx context.Context, userID string) (UserProfile, e
 	}, nil
 }
 
+func (s *Service) SetDisplayName(ctx context.Context, displayName string) error {
+	displayName = strings.TrimSpace(displayName)
+	if displayName == "" {
+		if err := s.client.DeleteProfileField(ctx, "displayname"); err != nil {
+			return fmt.Errorf("clear display name: %w", err)
+		}
+		return nil
+	}
+	if err := s.client.SetDisplayName(ctx, displayName); err != nil {
+		return fmt.Errorf("set display name: %w", err)
+	}
+	return nil
+}
+
+func (s *Service) SetAvatarURL(ctx context.Context, avatarURL string) error {
+	avatarURL = strings.TrimSpace(avatarURL)
+	if avatarURL == "" {
+		if err := s.client.DeleteProfileField(ctx, "avatar_url"); err != nil {
+			return fmt.Errorf("clear avatar url: %w", err)
+		}
+		return nil
+	}
+	parsed, err := id.ParseContentURI(avatarURL)
+	if err != nil {
+		return fmt.Errorf("parse avatar url: %w", err)
+	}
+	if err := s.client.SetAvatarURL(ctx, parsed); err != nil {
+		return fmt.Errorf("set avatar url: %w", err)
+	}
+	return nil
+}
+
+func (s *Service) SetPresence(ctx context.Context, req SetPresenceRequest) error {
+	if err := s.client.SetPresence(ctx, mautrix.ReqPresence{
+		Presence:  event.Presence(req.Presence),
+		StatusMsg: strings.TrimSpace(req.StatusMsg),
+	}); err != nil {
+		return fmt.Errorf("set presence: %w", err)
+	}
+	return nil
+}
+
 func (s *Service) ListRooms(ctx context.Context) ([]RoomSummary, error) {
 	resp, err := s.client.JoinedRooms(ctx)
 	if err != nil {
@@ -973,6 +1038,31 @@ func (s *Service) LeaveRoom(ctx context.Context, req LeaveRoomRequest) (LeaveRoo
 		return LeaveRoomResult{}, fmt.Errorf("leave room: %w", err)
 	}
 	return LeaveRoomResult{RoomID: req.RoomID}, nil
+}
+
+func (s *Service) SetTyping(ctx context.Context, req SetTypingRequest) error {
+	_, err := s.client.UserTyping(ctx, id.RoomID(req.RoomID), req.Typing, time.Duration(req.TimeoutMS)*time.Millisecond)
+	if err != nil {
+		return fmt.Errorf("set typing: %w", err)
+	}
+	return nil
+}
+
+func (s *Service) SetReadMarkers(ctx context.Context, req SetReadMarkersRequest) error {
+	content := mautrix.ReqSetReadMarkers{}
+	if req.ReadEventID != "" {
+		content.Read = id.EventID(req.ReadEventID)
+	}
+	if req.PrivateReadEventID != "" {
+		content.ReadPrivate = id.EventID(req.PrivateReadEventID)
+	}
+	if req.FullyReadEventID != "" {
+		content.FullyRead = id.EventID(req.FullyReadEventID)
+	}
+	if err := s.client.SetReadMarkers(ctx, id.RoomID(req.RoomID), content); err != nil {
+		return fmt.Errorf("set read markers: %w", err)
+	}
+	return nil
 }
 
 func (s *Service) CreateRoomAlias(ctx context.Context, req CreateRoomAliasRequest) (CreateRoomAliasResult, error) {

@@ -100,8 +100,38 @@ type leaveRoomOutput struct {
 	RoomID string `json:"room_id" jsonschema:"Matrix room ID that was left"`
 }
 
+type setTypingInput struct {
+	RoomID    string `json:"room_id" jsonschema:"Matrix room ID where the active account typing state should be updated"`
+	Typing    bool   `json:"typing" jsonschema:"Whether the active account should be marked as typing"`
+	TimeoutMS int64  `json:"timeout_ms,omitempty" jsonschema:"Typing timeout in milliseconds when typing is true. Defaults to 30000."`
+}
+
+type setTypingOutput struct {
+	BaseResult
+	RoomID    string `json:"room_id" jsonschema:"Matrix room ID whose typing state was updated"`
+	Typing    bool   `json:"typing" jsonschema:"Published typing state for the active account"`
+	TimeoutMS int64  `json:"timeout_ms,omitempty" jsonschema:"Typing timeout in milliseconds when typing is true"`
+}
+
+type setReadMarkersInput struct {
+	RoomID             string `json:"room_id" jsonschema:"Matrix room ID whose read markers should be updated"`
+	ReadEventID        string `json:"read_event_id,omitempty" jsonschema:"Event ID to publish as the public m.read receipt"`
+	PrivateReadEventID string `json:"private_read_event_id,omitempty" jsonschema:"Event ID to publish as the private m.read.private receipt"`
+	FullyReadEventID   string `json:"fully_read_event_id,omitempty" jsonschema:"Event ID to publish as the m.fully_read marker"`
+}
+
+type setReadMarkersOutput struct {
+	BaseResult
+	RoomID             string `json:"room_id" jsonschema:"Matrix room ID whose read markers were updated"`
+	ReadEventID        string `json:"read_event_id,omitempty" jsonschema:"Published public read receipt event ID"`
+	PrivateReadEventID string `json:"private_read_event_id,omitempty" jsonschema:"Published private read receipt event ID"`
+	FullyReadEventID   string `json:"fully_read_event_id,omitempty" jsonschema:"Published fully-read marker event ID"`
+}
+
+const defaultTypingTimeoutMS = 30000
+
 func RegisterRooms(r *catalog.Registrar, deps Dependencies, active scopes.Set) {
-	r.AddModule("rooms", "Room discovery, inspection, alias, directory, creation, and join actions.")
+	r.AddModule("rooms", "Room discovery, inspection, local activity, alias, directory, creation, and join actions.")
 
 	if active.Allows(scopes.ScopeRoomsRead) {
 		catalog.AddTool(r, "rooms", scopes.ScopeRoomsRead, &mcp.Tool{
@@ -352,6 +382,66 @@ func RegisterRooms(r *catalog.Registrar, deps Dependencies, active scopes.Set) {
 			return nil, leaveRoomOutput{
 				BaseResult: deps.baseResult(),
 				RoomID:     result.RoomID,
+			}, nil
+		})
+	}
+
+	if active.Allows(scopes.ScopeRoomsTypingWrite) {
+		catalog.AddTool(r, "rooms", scopes.ScopeRoomsTypingWrite, &mcp.Tool{
+			Name:        "matrix.v1.rooms.typing.set",
+			Description: "Set or clear the typing state for the active account in a room.",
+		}, func(ctx context.Context, req *mcp.CallToolRequest, input setTypingInput) (*mcp.CallToolResult, setTypingOutput, error) {
+			if err := requireNonEmpty("room_id", input.RoomID); err != nil {
+				return nil, setTypingOutput{}, err
+			}
+			timeoutMS := input.TimeoutMS
+			if input.Typing && timeoutMS <= 0 {
+				timeoutMS = defaultTypingTimeoutMS
+			}
+			if !input.Typing {
+				timeoutMS = 0
+			}
+			if err := deps.Matrix.SetTyping(ctx, matrixclient.SetTypingRequest{
+				RoomID:    input.RoomID,
+				Typing:    input.Typing,
+				TimeoutMS: timeoutMS,
+			}); err != nil {
+				return nil, setTypingOutput{}, err
+			}
+			return nil, setTypingOutput{
+				BaseResult: deps.baseResult(),
+				RoomID:     input.RoomID,
+				Typing:     input.Typing,
+				TimeoutMS:  timeoutMS,
+			}, nil
+		})
+	}
+
+	if active.Allows(scopes.ScopeRoomsReadMarkersWrite) {
+		catalog.AddTool(r, "rooms", scopes.ScopeRoomsReadMarkersWrite, &mcp.Tool{
+			Name:        "matrix.v1.rooms.read_markers.set",
+			Description: "Set public or private read receipts and fully-read markers for the active account in a room.",
+		}, func(ctx context.Context, req *mcp.CallToolRequest, input setReadMarkersInput) (*mcp.CallToolResult, setReadMarkersOutput, error) {
+			if err := requireNonEmpty("room_id", input.RoomID); err != nil {
+				return nil, setReadMarkersOutput{}, err
+			}
+			if input.ReadEventID == "" && input.PrivateReadEventID == "" && input.FullyReadEventID == "" {
+				return nil, setReadMarkersOutput{}, requireNonEmpty("read_event_id, private_read_event_id, or fully_read_event_id", "")
+			}
+			if err := deps.Matrix.SetReadMarkers(ctx, matrixclient.SetReadMarkersRequest{
+				RoomID:             input.RoomID,
+				ReadEventID:        input.ReadEventID,
+				PrivateReadEventID: input.PrivateReadEventID,
+				FullyReadEventID:   input.FullyReadEventID,
+			}); err != nil {
+				return nil, setReadMarkersOutput{}, err
+			}
+			return nil, setReadMarkersOutput{
+				BaseResult:         deps.baseResult(),
+				RoomID:             input.RoomID,
+				ReadEventID:        input.ReadEventID,
+				PrivateReadEventID: input.PrivateReadEventID,
+				FullyReadEventID:   input.FullyReadEventID,
 			}, nil
 		})
 	}

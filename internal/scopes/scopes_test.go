@@ -45,6 +45,22 @@ func TestParseAllowsAliasAndDirectoryScopes(t *testing.T) {
 	}
 }
 
+func TestParseSafeExpansion(t *testing.T) {
+	parsed, err := Parse("default,safe")
+	if err != nil {
+		t.Fatalf("Parse() error = %v", err)
+	}
+	if !parsed.Allows(ScopeClientProfileWrite) || !parsed.Allows(ScopeClientPresenceWrite) {
+		t.Fatal("expected client safe scopes to be enabled")
+	}
+	if !parsed.Allows(ScopeRoomsTypingWrite) || !parsed.Allows(ScopeRoomsReadMarkersWrite) {
+		t.Fatal("expected room safe scopes to be enabled")
+	}
+	if parsed.Allows(ScopeRoomsCreate) || parsed.Allows(ScopeUsersCreate) || parsed.Allows(ScopeMessagesRedact) {
+		t.Fatal("safe scope expansion should not enable privileged room, user, or redaction scopes")
+	}
+}
+
 func TestParseRejectsUnknownScope(t *testing.T) {
 	if _, err := Parse("wat"); err == nil {
 		t.Fatal("Parse() unexpectedly succeeded")
