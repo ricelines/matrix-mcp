@@ -62,6 +62,57 @@ func TestEncryptedTimelineNeverReturnsCiphertextAgainstTuwunel(t *testing.T) {
 	assertEncryptedTimelineStaysCiphertextFree(t, ctx, session, roomID.String(), target.EventID.String(), 15*time.Second)
 }
 
+func TestReplyToEncryptedEventAgainstTuwunel(t *testing.T) {
+	ctx := integrationContext(t)
+	hs := integrationHomeserver(t)
+	botUsername, botPassword := registerUser(t, ctx, hs, "matrixmcpe2eereplybot")
+	peerUsername, peerPassword := registerUser(t, ctx, hs, "matrixmcpe2eereplypeer")
+
+	session := newIntegrationSessionWithE2EE(t, ctx, hs, botUsername, botPassword, "default,rooms.join")
+	botClient, err := hs.LoginClient(ctx, botUsername, botPassword)
+	if err != nil {
+		t.Fatalf("login bot user: %v", err)
+	}
+	peer := startCryptoClient(t, hs.HomeserverURL, peerUsername, peerPassword, filepath.Join(t.TempDir(), "peer-reply-e2ee.db"))
+	t.Cleanup(func() {
+		if err := peer.Close(); err != nil {
+			t.Fatalf("close crypto peer: %v", err)
+		}
+	})
+
+	roomID := createEncryptedPrivateRoomAndInvite(t, peer.client, id.UserID(fmtUserID(botUsername)))
+	joined := callToolMap(t, ctx, session, "matrix.v1.rooms.join", map[string]any{"room": roomID.String()})
+	if joined["room_id"] != roomID.String() {
+		t.Fatalf("rooms.join payload = %#v, want room_id %s", joined, roomID)
+	}
+
+	waitForJoinedMember(t, peer.client, roomID, id.UserID(fmtUserID(botUsername)), 30*time.Second)
+	waitForJoinedMember(t, botClient, roomID, id.UserID(fmtUserID(botUsername)), 30*time.Second)
+	peer.shareGroupSession(t, roomID, id.UserID(fmtUserID(peerUsername)), id.UserID(fmtUserID(botUsername)))
+
+	if _, err := peer.client.SendText(ctx, roomID, "warmup"); err != nil {
+		t.Fatalf("peer send warmup text: %v", err)
+	}
+	target, err := peer.client.SendText(ctx, roomID, "hello encrypted")
+	if err != nil {
+		t.Fatalf("peer send encrypted text: %v", err)
+	}
+
+	assertEncryptedTimelineStaysCiphertextFree(t, ctx, session, roomID.String(), target.EventID.String(), 15*time.Second)
+
+	reply := callToolMap(t, ctx, session, "matrix.v1.messages.reply_text", map[string]any{
+		"room_id":  roomID.String(),
+		"event_id": target.EventID.String(),
+		"body":     "reply from encrypted bot",
+	})
+	replyID, _ := reply["event_id"].(string)
+	if replyID == "" {
+		t.Fatalf("messages.reply_text payload = %#v", reply)
+	}
+
+	assertEventEventuallyExists(t, ctx, botClient, roomID, replyID, 15*time.Second)
+}
+
 type cryptoClient struct {
 	client       *mautrix.Client
 	cryptoHelper *cryptohelper.CryptoHelper
@@ -265,4 +316,17 @@ func containsEncryptedEvent(events []any) bool {
 		}
 	}
 	return false
+}
+
+func assertEventEventuallyExists(t *testing.T, ctx context.Context, client *mautrix.Client, roomID id.RoomID, eventID string, timeout time.Duration) {
+	t.Helper()
+
+	deadline := time.Now().Add(timeout)
+	for time.Now().Before(deadline) {
+		if _, err := client.GetEvent(ctx, roomID, id.EventID(eventID)); err == nil {
+			return
+		}
+		time.Sleep(250 * time.Millisecond)
+	}
+	t.Fatalf("timed out waiting for event %s to exist in room %s", eventID, roomID)
 }

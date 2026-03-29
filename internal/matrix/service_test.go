@@ -8,7 +8,9 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
+	"time"
 
 	configpkg "github.com/ricelines/matrix-mcp/internal/config"
 	"maunium.net/go/mautrix"
@@ -452,6 +454,113 @@ func TestSummarizeEventsSkipsEncryptedEventsWithoutE2EE(t *testing.T) {
 	}
 }
 
+func TestReplyTextDoesNotRequireDecryptingTargetEvent(t *testing.T) {
+	var sendPayload map[string]any
+	svc := newClientTestService(t, func(r *http.Request) *http.Response {
+		switch {
+		case r.Method == http.MethodGet && r.URL.EscapedPath() == "/_matrix/client/v3/rooms/%21room:example.com/event/$target":
+			return jsonResponse(t, r, http.StatusOK, map[string]any{
+				"event_id":         "$target",
+				"room_id":          "!room:example.com",
+				"sender":           "@alice:example.com",
+				"type":             "m.room.encrypted",
+				"origin_server_ts": 1234,
+				"content": map[string]any{
+					"algorithm":  "m.megolm.v1.aes-sha2",
+					"ciphertext": "opaque",
+				},
+			})
+		case r.Method == http.MethodPut && strings.HasPrefix(r.URL.EscapedPath(), "/_matrix/client/v3/rooms/%21room:example.com/send/m.room.message/"):
+			if err := json.NewDecoder(r.Body).Decode(&sendPayload); err != nil {
+				t.Fatalf("decode send payload: %v", err)
+			}
+			return jsonResponse(t, r, http.StatusOK, map[string]any{"event_id": "$reply"})
+		default:
+			t.Fatalf("unexpected %s %s", r.Method, r.URL.EscapedPath())
+			return nil
+		}
+	})
+
+	result, err := svc.ReplyText(context.Background(), ReplyTextRequest{
+		RoomID:  "!room:example.com",
+		EventID: "$target",
+		Body:    "reply body",
+	})
+	if err != nil {
+		t.Fatalf("ReplyText() error = %v", err)
+	}
+	if result.EventID != "$reply" {
+		t.Fatalf("ReplyText() result = %#v, want event_id $reply", result)
+	}
+	if sendPayload["body"] != "reply body" {
+		t.Fatalf("send payload body = %#v, want reply body", sendPayload["body"])
+	}
+	if sendPayload["msgtype"] != "m.text" {
+		t.Fatalf("send payload msgtype = %#v, want m.text", sendPayload["msgtype"])
+	}
+
+	relatesTo, ok := sendPayload["m.relates_to"].(map[string]any)
+	if !ok {
+		t.Fatalf("send payload missing m.relates_to: %#v", sendPayload)
+	}
+	inReplyTo, ok := relatesTo["m.in_reply_to"].(map[string]any)
+	if !ok || inReplyTo["event_id"] != "$target" {
+		t.Fatalf("send payload m.in_reply_to = %#v, want event_id $target", relatesTo["m.in_reply_to"])
+	}
+	mentions, ok := sendPayload["m.mentions"].(map[string]any)
+	if !ok {
+		t.Fatalf("send payload missing m.mentions: %#v", sendPayload)
+	}
+	userIDs, ok := mentions["user_ids"].([]any)
+	if !ok || len(userIDs) != 1 || userIDs[0] != "@alice:example.com" {
+		t.Fatalf("send payload mentions = %#v, want @alice:example.com", mentions)
+	}
+}
+
+func TestEnsureRoomSendStateStoresFetchedEncryptionState(t *testing.T) {
+	client, err := mautrix.NewClient("https://example.com", "@bot:example.com", "access-token")
+	if err != nil {
+		t.Fatalf("NewClient() error = %v", err)
+	}
+	client.StateStore = mautrix.NewMemoryStateStore()
+	client.Crypto = noopCryptoHelper{}
+	client.Client = &http.Client{Transport: roundTripFunc(func(r *http.Request) (*http.Response, error) {
+		switch {
+		case r.Method == http.MethodGet && r.URL.EscapedPath() == "/_matrix/client/v3/rooms/%21room:example.com/state/m.room.encryption/":
+			return jsonResponse(t, r, http.StatusOK, map[string]any{
+				"algorithm": "m.megolm.v1.aes-sha2",
+			}), nil
+		case r.Method == http.MethodGet && r.URL.EscapedPath() == "/_matrix/client/v3/rooms/%21room:example.com/joined_members":
+			return jsonResponse(t, r, http.StatusOK, map[string]any{
+				"joined": map[string]any{
+					"@bot:example.com":   map[string]any{"display_name": "Bot"},
+					"@alice:example.com": map[string]any{"display_name": "Alice"},
+				},
+			}), nil
+		default:
+			t.Fatalf("unexpected %s %s", r.Method, r.URL.EscapedPath())
+			return nil, nil
+		}
+	})}
+
+	svc := &Service{
+		client:        client,
+		homeserverURL: "https://example.com",
+	}
+
+	if err := svc.ensureRoomSendState(context.Background(), id.RoomID("!room:example.com")); err != nil {
+		t.Fatalf("ensureRoomSendState() error = %v", err)
+	}
+
+	encrypted, err := client.StateStore.IsEncrypted(context.Background(), id.RoomID("!room:example.com"))
+	if err != nil {
+		t.Fatalf("StateStore.IsEncrypted() error = %v", err)
+	}
+	if !encrypted {
+		t.Fatal("room encryption state was not persisted")
+	}
+}
+
 func newRegistrationTestService(t *testing.T, responder func(*http.Request) *http.Response) *Service {
 	t.Helper()
 	return &Service{
@@ -503,4 +612,25 @@ func jsonResponse(t *testing.T, req *http.Request, status int, payload map[strin
 		Body:       io.NopCloser(bytes.NewReader(body)),
 		Request:    req,
 	}
+}
+
+type noopCryptoHelper struct{}
+
+func (noopCryptoHelper) Encrypt(context.Context, id.RoomID, event.Type, any) (*event.EncryptedEventContent, error) {
+	return nil, nil
+}
+
+func (noopCryptoHelper) Decrypt(context.Context, *event.Event) (*event.Event, error) {
+	return nil, nil
+}
+
+func (noopCryptoHelper) WaitForSession(context.Context, id.RoomID, id.SenderKey, id.SessionID, time.Duration) bool {
+	return false
+}
+
+func (noopCryptoHelper) RequestSession(context.Context, id.RoomID, id.SenderKey, id.SessionID, id.UserID, id.DeviceID) {
+}
+
+func (noopCryptoHelper) Init(context.Context) error {
+	return nil
 }

@@ -553,6 +553,11 @@ func (s *Service) ensureRoomSendState(ctx context.Context, roomID id.RoomID) err
 		switch {
 		case err == nil:
 			encrypted = content.Algorithm == id.AlgorithmMegolmV1
+			if encrypted {
+				if err := s.client.StateStore.SetEncryptionEvent(ctx, roomID, &content); err != nil {
+					return fmt.Errorf("store room encryption state: %w", err)
+				}
+			}
 		case errors.Is(err, mautrix.MNotFound):
 			return nil
 		default:
@@ -1155,11 +1160,10 @@ func (s *Service) ReplyText(ctx context.Context, req ReplyTextRequest) (EventWri
 	if err != nil {
 		return EventWriteResult{}, fmt.Errorf("load replied-to event: %w", err)
 	}
-	original, err = s.decryptEvent(ctx, original)
-	if err != nil {
-		return EventWriteResult{}, fmt.Errorf("decrypt replied-to event: %w", err)
-	}
 	content := buildMessageContent(req.Body, req.Notice)
+	// Matrix replies only need the target event ID and sender. Requiring decrypted
+	// content here breaks replies to encrypted events that this device hasn't
+	// decrypted yet, even though the relation can still be constructed correctly.
 	content.SetReply(original)
 	resp, err := s.client.SendMessageEvent(ctx, id.RoomID(req.RoomID), event.EventMessage, content)
 	if err != nil {
