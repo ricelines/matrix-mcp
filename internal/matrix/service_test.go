@@ -14,6 +14,7 @@ import (
 
 	configpkg "github.com/ricelines/matrix-mcp/internal/config"
 	"maunium.net/go/mautrix"
+	"maunium.net/go/mautrix/crypto/cryptohelper"
 	"maunium.net/go/mautrix/event"
 	"maunium.net/go/mautrix/id"
 )
@@ -454,6 +455,186 @@ func TestSummarizeEventsSkipsEncryptedEventsWithoutE2EE(t *testing.T) {
 	}
 }
 
+func TestSummarizeEventSurfacesDecryptErrors(t *testing.T) {
+	svc := &Service{
+		cryptoHelper: stubCryptoHelper{
+			decrypt: func(ctx context.Context, evt *event.Event) (*event.Event, error) {
+				if _, ok := evt.Content.Parsed.(*event.EncryptedEventContent); !ok {
+					t.Fatalf("Decrypt() saw unparsed content: %#v", evt.Content)
+				}
+				return nil, errors.New("decrypt exploded")
+			},
+		},
+	}
+
+	_, err := svc.summarizeEvent(context.Background(), mustUnmarshalEvent(t, encryptedEventPayload("$enc")))
+	if err == nil {
+		t.Fatal("summarizeEvent() error = nil, want decrypt failure")
+	}
+	if errors.Is(err, errEventContentUnavailable) {
+		t.Fatalf("summarizeEvent() error = %v, should not be collapsed to errEventContentUnavailable", err)
+	}
+	if !strings.Contains(err.Error(), "decrypt event $enc: decrypt exploded") {
+		t.Fatalf("summarizeEvent() error = %v, want decrypt context", err)
+	}
+}
+
+func TestSummarizeEventKeepsMissingSessionUnavailable(t *testing.T) {
+	svc := &Service{
+		cryptoHelper: stubCryptoHelper{
+			decrypt: func(context.Context, *event.Event) (*event.Event, error) {
+				return nil, cryptohelper.NoSessionFound
+			},
+			waitForSession: func(context.Context, id.RoomID, id.SenderKey, id.SessionID, time.Duration) bool {
+				return false
+			},
+		},
+	}
+
+	_, err := svc.summarizeEvent(context.Background(), mustUnmarshalEvent(t, encryptedEventPayload("$enc")))
+	if !errors.Is(err, errEventContentUnavailable) {
+		t.Fatalf("summarizeEvent() error = %v, want errEventContentUnavailable", err)
+	}
+}
+
+func TestGetEventParsesFetchedEncryptedEventBeforeDecrypting(t *testing.T) {
+	svc := newClientTestService(t, func(r *http.Request) *http.Response {
+		if r.Method != http.MethodGet || r.URL.EscapedPath() != "/_matrix/client/v3/rooms/%21room:example.com/event/$enc" {
+			t.Fatalf("unexpected %s %s", r.Method, r.URL.EscapedPath())
+		}
+		return jsonResponse(t, r, http.StatusOK, encryptedEventPayload("$enc"))
+	})
+	svc.cryptoHelper = stubCryptoHelper{
+		decrypt: func(ctx context.Context, evt *event.Event) (*event.Event, error) {
+			if _, ok := evt.Content.Parsed.(*event.EncryptedEventContent); !ok {
+				t.Fatalf("Decrypt() saw unparsed content: %#v", evt.Content)
+			}
+			return decryptedMessageEvent(evt, "hello decrypted"), nil
+		},
+	}
+
+	summary, err := svc.GetEvent(context.Background(), "!room:example.com", "$enc")
+	if err != nil {
+		t.Fatalf("GetEvent() error = %v", err)
+	}
+	if summary.Type != event.EventMessage.Type {
+		t.Fatalf("GetEvent() type = %q, want %q", summary.Type, event.EventMessage.Type)
+	}
+	if summary.Content["body"] != "hello decrypted" {
+		t.Fatalf("GetEvent() content = %#v, want decrypted body", summary.Content)
+	}
+}
+
+func TestGetEventContextDecryptsFetchedEncryptedEvents(t *testing.T) {
+	svc := newClientTestService(t, func(r *http.Request) *http.Response {
+		if r.Method != http.MethodGet || r.URL.EscapedPath() != "/_matrix/client/v3/rooms/%21room:example.com/context/$target" {
+			t.Fatalf("unexpected %s %s", r.Method, r.URL.EscapedPath())
+		}
+		return jsonResponse(t, r, http.StatusOK, map[string]any{
+			"start": "start-token",
+			"end":   "end-token",
+			"event": encryptedEventPayload("$target"),
+			"events_before": []any{
+				encryptedEventPayload("$before"),
+			},
+			"events_after": []any{
+				encryptedEventPayload("$after"),
+			},
+			"state": []any{},
+		})
+	})
+	svc.cryptoHelper = stubCryptoHelper{
+		decrypt: func(ctx context.Context, evt *event.Event) (*event.Event, error) {
+			if _, ok := evt.Content.Parsed.(*event.EncryptedEventContent); !ok {
+				t.Fatalf("Decrypt() saw unparsed content: %#v", evt.Content)
+			}
+			return decryptedMessageEvent(evt, "decrypted "+evt.ID.String()), nil
+		},
+	}
+
+	result, err := svc.GetEventContext(context.Background(), "!room:example.com", "$target", 5)
+	if err != nil {
+		t.Fatalf("GetEventContext() error = %v", err)
+	}
+	if result.Event.Content["body"] != "decrypted $target" {
+		t.Fatalf("GetEventContext() center = %#v, want decrypted target", result.Event)
+	}
+	if len(result.EventsBefore) != 1 || result.EventsBefore[0].Content["body"] != "decrypted $before" {
+		t.Fatalf("GetEventContext() events_before = %#v, want decrypted event", result.EventsBefore)
+	}
+	if len(result.EventsAfter) != 1 || result.EventsAfter[0].Content["body"] != "decrypted $after" {
+		t.Fatalf("GetEventContext() events_after = %#v, want decrypted event", result.EventsAfter)
+	}
+}
+
+func TestListMessagesDecryptsFetchedEncryptedEvents(t *testing.T) {
+	svc := newClientTestService(t, func(r *http.Request) *http.Response {
+		if r.Method != http.MethodGet || r.URL.EscapedPath() != "/_matrix/client/v3/rooms/%21room:example.com/messages" {
+			t.Fatalf("unexpected %s %s", r.Method, r.URL.EscapedPath())
+		}
+		return jsonResponse(t, r, http.StatusOK, map[string]any{
+			"start": "start-token",
+			"end":   "end-token",
+			"chunk": []any{
+				encryptedEventPayload("$enc"),
+			},
+			"state": []any{},
+		})
+	})
+	svc.cryptoHelper = stubCryptoHelper{
+		decrypt: func(ctx context.Context, evt *event.Event) (*event.Event, error) {
+			if _, ok := evt.Content.Parsed.(*event.EncryptedEventContent); !ok {
+				t.Fatalf("Decrypt() saw unparsed content: %#v", evt.Content)
+			}
+			return decryptedMessageEvent(evt, "timeline body"), nil
+		},
+	}
+
+	result, err := svc.ListMessages(context.Background(), ListMessagesRequest{RoomID: "!room:example.com", Limit: 10})
+	if err != nil {
+		t.Fatalf("ListMessages() error = %v", err)
+	}
+	if len(result.Events) != 1 {
+		t.Fatalf("ListMessages() events len = %d, want 1", len(result.Events))
+	}
+	if result.Events[0].Content["body"] != "timeline body" {
+		t.Fatalf("ListMessages() event = %#v, want decrypted body", result.Events[0])
+	}
+}
+
+func TestListRelationsDecryptsFetchedEncryptedEvents(t *testing.T) {
+	svc := newClientTestService(t, func(r *http.Request) *http.Response {
+		if r.Method != http.MethodGet || r.URL.EscapedPath() != "/_matrix/client/v1/rooms/%21room:example.com/relations/$target" {
+			t.Fatalf("unexpected %s %s", r.Method, r.URL.EscapedPath())
+		}
+		return jsonResponse(t, r, http.StatusOK, map[string]any{
+			"chunk": []any{
+				encryptedEventPayload("$relation"),
+			},
+			"next_batch": "next-token",
+		})
+	})
+	svc.cryptoHelper = stubCryptoHelper{
+		decrypt: func(ctx context.Context, evt *event.Event) (*event.Event, error) {
+			if _, ok := evt.Content.Parsed.(*event.EncryptedEventContent); !ok {
+				t.Fatalf("Decrypt() saw unparsed content: %#v", evt.Content)
+			}
+			return decryptedMessageEvent(evt, "relation body"), nil
+		},
+	}
+
+	result, err := svc.ListRelations(context.Background(), ListRelationsRequest{RoomID: "!room:example.com", EventID: "$target", Limit: 10})
+	if err != nil {
+		t.Fatalf("ListRelations() error = %v", err)
+	}
+	if len(result.Events) != 1 {
+		t.Fatalf("ListRelations() events len = %d, want 1", len(result.Events))
+	}
+	if result.Events[0].Content["body"] != "relation body" {
+		t.Fatalf("ListRelations() event = %#v, want decrypted body", result.Events[0])
+	}
+}
+
 func TestReplyTextDoesNotRequireDecryptingTargetEvent(t *testing.T) {
 	var sendPayload map[string]any
 	svc := newClientTestService(t, func(r *http.Request) *http.Response {
@@ -561,6 +742,47 @@ func TestEnsureRoomSendStateStoresFetchedEncryptionState(t *testing.T) {
 	}
 }
 
+func TestStartSyncRetriesAfterFailure(t *testing.T) {
+	firstCall := make(chan struct{}, 1)
+	secondCall := make(chan struct{}, 1)
+	calls := 0
+
+	svc := &Service{
+		syncFn: func(ctx context.Context) error {
+			calls++
+			switch calls {
+			case 1:
+				firstCall <- struct{}{}
+				return errors.New("transient sync failure")
+			case 2:
+				secondCall <- struct{}{}
+				<-ctx.Done()
+				return ctx.Err()
+			default:
+				t.Fatalf("unexpected sync call %d", calls)
+				return nil
+			}
+		},
+	}
+	svc.startSync(context.Background())
+
+	select {
+	case <-firstCall:
+	case <-time.After(time.Second):
+		t.Fatal("startSync() did not invoke the initial sync call")
+	}
+
+	select {
+	case <-secondCall:
+	case <-time.After(3 * syncRetryInterval):
+		t.Fatal("startSync() did not retry after a transient sync failure")
+	}
+
+	if err := svc.Close(); err != nil {
+		t.Fatalf("Close() error = %v", err)
+	}
+}
+
 func newRegistrationTestService(t *testing.T, responder func(*http.Request) *http.Response) *Service {
 	t.Helper()
 	return &Service{
@@ -614,6 +836,54 @@ func jsonResponse(t *testing.T, req *http.Request, status int, payload map[strin
 	}
 }
 
+func encryptedEventPayload(eventID string) map[string]any {
+	return map[string]any{
+		"event_id":         eventID,
+		"room_id":          "!room:example.com",
+		"sender":           "@alice:example.com",
+		"type":             event.EventEncrypted.Type,
+		"origin_server_ts": 1234,
+		"content": map[string]any{
+			"algorithm":  id.AlgorithmMegolmV1,
+			"ciphertext": "opaque",
+			"device_id":  "DEV1",
+			"sender_key": "curve25519:alice",
+			"session_id": "session-id",
+		},
+	}
+}
+
+func mustUnmarshalEvent(t *testing.T, payload map[string]any) *event.Event {
+	t.Helper()
+
+	raw, err := json.Marshal(payload)
+	if err != nil {
+		t.Fatalf("marshal event payload: %v", err)
+	}
+
+	var evt event.Event
+	if err := json.Unmarshal(raw, &evt); err != nil {
+		t.Fatalf("unmarshal event payload: %v", err)
+	}
+	return &evt
+}
+
+func decryptedMessageEvent(evt *event.Event, body string) *event.Event {
+	return &event.Event{
+		ID:        evt.ID,
+		RoomID:    evt.RoomID,
+		Sender:    evt.Sender,
+		Type:      event.EventMessage,
+		Timestamp: evt.Timestamp,
+		Content: event.Content{
+			Raw: map[string]any{
+				"msgtype": "m.text",
+				"body":    body,
+			},
+		},
+	}
+}
+
 type noopCryptoHelper struct{}
 
 func (noopCryptoHelper) Encrypt(context.Context, id.RoomID, event.Type, any) (*event.EncryptedEventContent, error) {
@@ -632,5 +902,47 @@ func (noopCryptoHelper) RequestSession(context.Context, id.RoomID, id.SenderKey,
 }
 
 func (noopCryptoHelper) Init(context.Context) error {
+	return nil
+}
+
+func (noopCryptoHelper) Close() error {
+	return nil
+}
+
+type stubCryptoHelper struct {
+	decrypt        func(context.Context, *event.Event) (*event.Event, error)
+	waitForSession func(context.Context, id.RoomID, id.SenderKey, id.SessionID, time.Duration) bool
+	requestSession func(context.Context, id.RoomID, id.SenderKey, id.SessionID, id.UserID, id.DeviceID)
+}
+
+func (s stubCryptoHelper) Encrypt(context.Context, id.RoomID, event.Type, any) (*event.EncryptedEventContent, error) {
+	return nil, nil
+}
+
+func (s stubCryptoHelper) Decrypt(ctx context.Context, evt *event.Event) (*event.Event, error) {
+	if s.decrypt == nil {
+		return nil, nil
+	}
+	return s.decrypt(ctx, evt)
+}
+
+func (s stubCryptoHelper) WaitForSession(ctx context.Context, roomID id.RoomID, senderKey id.SenderKey, sessionID id.SessionID, timeout time.Duration) bool {
+	if s.waitForSession == nil {
+		return false
+	}
+	return s.waitForSession(ctx, roomID, senderKey, sessionID, timeout)
+}
+
+func (s stubCryptoHelper) RequestSession(ctx context.Context, roomID id.RoomID, senderKey id.SenderKey, sessionID id.SessionID, userID id.UserID, deviceID id.DeviceID) {
+	if s.requestSession != nil {
+		s.requestSession(ctx, roomID, senderKey, sessionID, userID, deviceID)
+	}
+}
+
+func (stubCryptoHelper) Init(context.Context) error {
+	return nil
+}
+
+func (stubCryptoHelper) Close() error {
 	return nil
 }

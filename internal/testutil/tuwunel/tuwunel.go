@@ -132,7 +132,7 @@ func (i *Instance) RegisterUser(ctx context.Context, username, password string) 
 	if err != nil {
 		return err
 	}
-	registerReq := &mautrix.ReqRegister{Username: username, Password: password}
+	registerReq := &mautrix.ReqRegister[any]{Username: username, Password: password}
 	if i.RegistrationToken == "" {
 		_, err = client.RegisterDummy(ctx, registerReq)
 		return err

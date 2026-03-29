@@ -62,6 +62,46 @@ func TestEncryptedTimelineNeverReturnsCiphertextAgainstTuwunel(t *testing.T) {
 	assertEncryptedTimelineStaysCiphertextFree(t, ctx, session, roomID.String(), target.EventID.String(), 15*time.Second)
 }
 
+func TestEncryptedTimelineReturnsDecryptedBodiesAgainstTuwunel(t *testing.T) {
+	ctx := integrationContext(t)
+	hs := integrationHomeserver(t)
+	botUsername, botPassword := registerUser(t, ctx, hs, "matrixmcpe2eebodybot")
+	peerUsername, peerPassword := registerUser(t, ctx, hs, "matrixmcpe2eebodypeer")
+
+	session := newIntegrationSessionWithE2EE(t, ctx, hs, botUsername, botPassword, "default,rooms.join")
+	botClient, err := hs.LoginClient(ctx, botUsername, botPassword)
+	if err != nil {
+		t.Fatalf("login bot user: %v", err)
+	}
+	peer := startCryptoClient(t, hs.HomeserverURL, peerUsername, peerPassword, filepath.Join(t.TempDir(), "peer-e2ee-body.db"))
+	t.Cleanup(func() {
+		if err := peer.Close(); err != nil {
+			t.Fatalf("close crypto peer: %v", err)
+		}
+	})
+
+	roomID := createEncryptedPrivateRoomAndInvite(t, peer.client, id.UserID(fmtUserID(botUsername)))
+	joined := callToolMap(t, ctx, session, "matrix.v1.rooms.join", map[string]any{"room": roomID.String()})
+	if joined["room_id"] != roomID.String() {
+		t.Fatalf("rooms.join payload = %#v, want room_id %s", joined, roomID)
+	}
+
+	waitForJoinedMember(t, peer.client, roomID, id.UserID(fmtUserID(botUsername)), 30*time.Second)
+	waitForJoinedMember(t, botClient, roomID, id.UserID(fmtUserID(botUsername)), 30*time.Second)
+	peer.shareGroupSession(t, roomID, id.UserID(fmtUserID(peerUsername)), id.UserID(fmtUserID(botUsername)))
+
+	if _, err := peer.client.SendText(ctx, roomID, "warmup"); err != nil {
+		t.Fatalf("peer send warmup text: %v", err)
+	}
+	targetBody := "hello encrypted"
+	target, err := peer.client.SendText(ctx, roomID, targetBody)
+	if err != nil {
+		t.Fatalf("peer send encrypted text: %v", err)
+	}
+
+	assertEncryptedTimelineReturnsDecryptedBodies(t, ctx, session, roomID.String(), target.EventID.String(), targetBody, 15*time.Second)
+}
+
 func TestReplyToEncryptedEventAgainstTuwunel(t *testing.T) {
 	ctx := integrationContext(t)
 	hs := integrationHomeserver(t)
@@ -287,6 +327,62 @@ func assertEncryptedTimelineStaysCiphertextFree(t *testing.T, ctx context.Contex
 	if !sawTimeline {
 		t.Fatalf("timed out polling timeline.messages.list for room %s", roomID)
 	}
+}
+
+func assertEncryptedTimelineReturnsDecryptedBodies(t *testing.T, ctx context.Context, session *mcp.ClientSession, roomID string, eventID string, body string, timeout time.Duration) {
+	t.Helper()
+
+	deadline := time.Now().Add(timeout)
+	for time.Now().Before(deadline) {
+		haveEvent := false
+		eventResult, err := callToolMapErr(ctx, session, "matrix.v1.timeline.event.get", map[string]any{
+			"room_id":  roomID,
+			"event_id": eventID,
+		})
+		if err == nil {
+			summary := nestedMap(t, eventResult, "event")
+			content := nestedMap(t, summary, "content")
+			haveEvent = summary["type"] == event.EventMessage.Type && content["body"] == body
+		}
+
+		haveContext := false
+		contextResult, err := callToolMapErr(ctx, session, "matrix.v1.timeline.event.context.get", map[string]any{
+			"room_id":  roomID,
+			"event_id": eventID,
+			"limit":    5,
+		})
+		if err == nil {
+			summary := nestedMap(t, contextResult, "event")
+			content := nestedMap(t, summary, "content")
+			haveContext = summary["type"] == event.EventMessage.Type && content["body"] == body
+		}
+
+		haveTimeline := false
+		timelineResult, err := callToolMapErr(ctx, session, "matrix.v1.timeline.messages.list", map[string]any{
+			"room_id": roomID,
+			"limit":   10,
+		})
+		if err == nil {
+			events, _ := timelineResult["events"].([]any)
+			for _, raw := range events {
+				eventMap, ok := raw.(map[string]any)
+				if !ok || eventMap["event_id"] != eventID {
+					continue
+				}
+				content, ok := eventMap["content"].(map[string]any)
+				if ok && eventMap["type"] == event.EventMessage.Type && content["body"] == body {
+					haveTimeline = true
+				}
+			}
+		}
+
+		if haveEvent && haveContext && haveTimeline {
+			return
+		}
+		time.Sleep(250 * time.Millisecond)
+	}
+
+	t.Fatalf("timed out waiting for decrypted timeline body for event %s in room %s", eventID, roomID)
 }
 
 func callToolMapErr(ctx context.Context, session *mcp.ClientSession, name string, args map[string]any) (map[string]any, error) {

@@ -28,6 +28,7 @@ const (
 	RoomDirectoryVisibilityPublic  = "public"
 	loginRetryInterval             = 250 * time.Millisecond
 	loginRetryTimeout              = 15 * time.Second
+	syncRetryInterval              = time.Second
 )
 
 var errEventContentUnavailable = errors.New("event content unavailable")
@@ -323,11 +324,17 @@ type Service struct {
 	homeserverURL         string
 	registrationToken     string
 	newRegistrationClient func(string) (*mautrix.Client, error)
-	cryptoHelper          *cryptohelper.CryptoHelper
+	cryptoHelper          managedCryptoHelper
+	syncFn                func(context.Context) error
 	syncCancel            context.CancelFunc
 	syncDone              chan struct{}
 	closeOnce             sync.Once
 	closeErr              error
+}
+
+type managedCryptoHelper interface {
+	mautrix.CryptoHelper
+	Close() error
 }
 
 type registrationTokenAuthData struct {
@@ -398,11 +405,26 @@ func (s *Service) startSync(parent context.Context) {
 	syncCtx, cancel := context.WithCancel(parent)
 	s.syncCancel = cancel
 	s.syncDone = make(chan struct{})
+	syncFn := s.syncFn
+	if syncFn == nil {
+		syncFn = s.client.SyncWithContext
+	}
 
 	go func() {
 		defer close(s.syncDone)
-		if err := s.client.SyncWithContext(syncCtx); err != nil && !errors.Is(err, context.Canceled) {
-			// Keep serving requests; a transient sync failure should not kill the MCP process.
+		for {
+			err := syncFn(syncCtx)
+			if err == nil || errors.Is(err, context.Canceled) {
+				return
+			}
+
+			timer := time.NewTimer(syncRetryInterval)
+			select {
+			case <-syncCtx.Done():
+				timer.Stop()
+				return
+			case <-timer.C:
+			}
 		}
 	}()
 }
@@ -483,6 +505,9 @@ func (s *Service) decryptEvent(ctx context.Context, evt *event.Event) (*event.Ev
 	if s.cryptoHelper == nil {
 		return nil, errEventContentUnavailable
 	}
+	if err := ensureParsedEventContent(evt); err != nil {
+		return nil, fmt.Errorf("parse encrypted event %s: %w", evt.ID, err)
+	}
 
 	decrypted, err := s.cryptoHelper.Decrypt(ctx, evt)
 	if err == nil {
@@ -492,7 +517,7 @@ func (s *Service) decryptEvent(ctx context.Context, evt *event.Event) (*event.Ev
 		return decrypted, nil
 	}
 	if !errors.Is(err, cryptohelper.NoSessionFound) {
-		return nil, errEventContentUnavailable
+		return nil, fmt.Errorf("decrypt event %s: %w", evt.ID, err)
 	}
 
 	content := evt.Content.AsEncrypted()
@@ -503,12 +528,33 @@ func (s *Service) decryptEvent(ctx context.Context, evt *event.Event) (*event.Ev
 
 	decrypted, err = s.cryptoHelper.Decrypt(ctx, evt)
 	if err != nil {
-		return nil, errEventContentUnavailable
+		if errors.Is(err, cryptohelper.NoSessionFound) {
+			return nil, errEventContentUnavailable
+		}
+		return nil, fmt.Errorf("decrypt event %s after session request: %w", evt.ID, err)
 	}
 	if decrypted == nil || decrypted.Type == event.EventEncrypted {
 		return nil, errEventContentUnavailable
 	}
 	return decrypted, nil
+}
+
+func ensureParsedEventContent(evt *event.Event) error {
+	if evt == nil || evt.Content.Parsed != nil {
+		return nil
+	}
+	if len(evt.Content.VeryRaw) == 0 && evt.Content.Raw != nil {
+		raw, err := json.Marshal(evt.Content.Raw)
+		if err != nil {
+			return err
+		}
+		evt.Content.VeryRaw = raw
+	}
+	err := evt.Content.ParseRaw(evt.Type)
+	if errors.Is(err, event.ErrContentAlreadyParsed) {
+		return nil
+	}
+	return err
 }
 
 func (s *Service) summarizeEvent(ctx context.Context, evt *event.Event) (EventSummary, error) {
@@ -669,7 +715,7 @@ func (s *Service) CreateUser(ctx context.Context, req CreateUserRequest) (Create
 		return CreateUserResult{}, fmt.Errorf("build registration client: %w", err)
 	}
 
-	registerReq := &mautrix.ReqRegister{
+	registerReq := &mautrix.ReqRegister[any]{
 		Username:                 req.Username,
 		Password:                 password,
 		InitialDeviceDisplayName: req.InitialDeviceDisplayName,
