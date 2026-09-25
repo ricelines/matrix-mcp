@@ -36,7 +36,7 @@ func main() {
 	}
 	httpServer := &http.Server{
 		Addr:              cfg.ListenAddr,
-		Handler:           mcpserver.RequireBearerToken(cfg.AuthToken, server.Handler()),
+		Handler:           mcpserver.AccessLog(mcpserver.RequireBearerToken(cfg.AuthToken, server.Handler())),
 		ReadHeaderTimeout: 10 * time.Second,
 	}
 
