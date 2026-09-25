@@ -37,7 +37,7 @@ type createUserOutput struct {
 }
 
 type searchUsersInput struct {
-	Query string `json:"query" jsonschema:"Search term for Matrix user directory lookup"`
+	Query string `json:"query" jsonschema:"Case-insensitive substring of a display name or user ID"`
 	Limit int    `json:"limit,omitempty" jsonschema:"Maximum number of results to return"`
 }
 
@@ -76,7 +76,7 @@ func RegisterUsers(r *catalog.Registrar, deps Dependencies, active scopes.Set) {
 
 		catalog.AddTool(r, "users", scopes.ScopeUsersRead, &mcp.Tool{
 			Name:        "matrix.v1.users.search",
-			Description: "Search the Matrix user directory by ID or display name.",
+			Description: "Search users by ID or display name: the homeserver user directory plus everyone in the account's joined rooms (bridged contacts, e.g. WhatsApp/Telegram ghosts, are only found this way). Each result lists shared_room_ids, smallest room first, so the first one is usually the DM.",
 		}, func(ctx context.Context, req *mcp.CallToolRequest, input searchUsersInput) (*mcp.CallToolResult, searchUsersOutput, error) {
 			if err := requireNonEmpty("query", input.Query); err != nil {
 				return nil, searchUsersOutput{}, err

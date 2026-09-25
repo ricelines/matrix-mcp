@@ -32,6 +32,8 @@ const (
 	syncRetryInterval              = time.Second
 	roomListConcurrency            = 8
 	roomListCacheTTL               = 2 * time.Minute
+	memberIndexCacheTTL            = 5 * time.Minute
+	maxSharedRoomIDs               = 10
 )
 
 var errEventContentUnavailable = errors.New("event content unavailable")
@@ -48,9 +50,11 @@ type VersionInfo struct {
 }
 
 type SearchUser struct {
-	UserID      string `json:"user_id"`
-	DisplayName string `json:"display_name,omitempty"`
-	AvatarURL   string `json:"avatar_url,omitempty"`
+	UserID          string   `json:"user_id"`
+	DisplayName     string   `json:"display_name,omitempty"`
+	AvatarURL       string   `json:"avatar_url,omitempty"`
+	SharedRoomIDs   []string `json:"shared_room_ids,omitempty" jsonschema:"Joined rooms this user is also in (at most 10); a room with just the two of you is the DM"`
+	SharedRoomCount int      `json:"shared_room_count,omitempty" jsonschema:"Total number of joined rooms shared with this user"`
 }
 
 type UserProfile struct {
@@ -338,6 +342,18 @@ type Service struct {
 	roomsMu       sync.Mutex
 	roomsCache    []RoomSummary
 	roomsCachedAt time.Time
+
+	membersMu       sync.Mutex
+	membersCache    map[id.UserID]*roomMember
+	membersCachedAt time.Time
+}
+
+// roomMember is one user seen across the account's joined rooms.
+type roomMember struct {
+	userID      id.UserID
+	displayName string
+	avatarURL   string
+	roomIDs     []string
 }
 
 type managedCryptoHelper interface {
@@ -765,6 +781,10 @@ func (s *Service) CreateUser(ctx context.Context, req CreateUserRequest) (Create
 	return result, nil
 }
 
+// SearchUsers merges the homeserver user directory with the members of the
+// account's joined rooms. Synapse leaves users in exclusive appservice
+// namespaces (bridge ghosts) out of its directory, so on a bridged account the
+// directory alone finds almost none of the actual contacts.
 func (s *Service) SearchUsers(ctx context.Context, query string, limit int) ([]SearchUser, bool, error) {
 	if limit <= 0 {
 		limit = 10
@@ -773,19 +793,161 @@ func (s *Service) SearchUsers(ctx context.Context, query string, limit int) ([]S
 	if err != nil {
 		return nil, false, fmt.Errorf("search users: %w", err)
 	}
+	members, err := s.joinedMemberIndex(ctx)
+	if err != nil {
+		return nil, false, err
+	}
 
 	results := make([]SearchUser, 0, len(resp.Results))
+	seen := make(map[id.UserID]bool, len(resp.Results))
 	for _, result := range resp.Results {
 		if result == nil {
 			continue
 		}
-		results = append(results, SearchUser{
+		seen[result.UserID] = true
+		displayName := result.DisplayName
+		if displayName == "" {
+			// The spec (and Synapse) name this field display_name, but mautrix's
+			// UserDirectoryEntry only reads displayname and leaves the rest in Extra.
+			displayName, _ = result.Extra["display_name"].(string)
+		}
+		user := SearchUser{
 			UserID:      result.UserID.String(),
-			DisplayName: result.DisplayName,
+			DisplayName: displayName,
 			AvatarURL:   result.AvatarURL.String(),
+		}
+		if member, ok := members[result.UserID]; ok {
+			user.SharedRoomIDs, user.SharedRoomCount = sharedRooms(member)
+		}
+		results = append(results, user)
+	}
+
+	needle := FoldSearchText(query)
+	local := make([]*roomMember, 0)
+	for _, member := range members {
+		if seen[member.userID] {
+			continue
+		}
+		if strings.Contains(FoldSearchText(member.displayName), needle) || strings.Contains(FoldSearchText(member.userID.String()), needle) {
+			local = append(local, member)
+		}
+	}
+	sort.Slice(local, func(i, j int) bool {
+		if local[i].displayName != local[j].displayName {
+			return local[i].displayName < local[j].displayName
+		}
+		return local[i].userID < local[j].userID
+	})
+	for _, member := range local {
+		user := SearchUser{
+			UserID:      member.userID.String(),
+			DisplayName: member.displayName,
+			AvatarURL:   member.avatarURL,
+		}
+		user.SharedRoomIDs, user.SharedRoomCount = sharedRooms(member)
+		results = append(results, user)
+	}
+
+	limited := resp.Limited
+	if len(results) > limit {
+		results = results[:limit]
+		limited = true
+	}
+	return results, limited, nil
+}
+
+// FoldSearchText normalizes text for case-insensitive substring search,
+// folding "ё" into "е" the way people type Russian names.
+func FoldSearchText(text string) string {
+	return strings.ReplaceAll(strings.ToLower(text), "ё", "е")
+}
+
+func sharedRooms(member *roomMember) ([]string, int) {
+	rooms := member.roomIDs
+	if len(rooms) > maxSharedRoomIDs {
+		rooms = rooms[:maxSharedRoomIDs]
+	}
+	return slices.Clone(rooms), len(member.roomIDs)
+}
+
+// joinedMemberIndex maps every other user in the account's joined rooms to
+// their profile and the rooms they share with the account. It costs one
+// request per room, so it is built concurrently and cached briefly.
+func (s *Service) joinedMemberIndex(ctx context.Context) (map[id.UserID]*roomMember, error) {
+	s.membersMu.Lock()
+	defer s.membersMu.Unlock()
+	if s.membersCache != nil && time.Since(s.membersCachedAt) < memberIndexCacheTTL {
+		return s.membersCache, nil
+	}
+
+	resp, err := s.client.JoinedRooms(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("list joined rooms: %w", err)
+	}
+	perRoom := make([]*mautrix.RespJoinedMembers, len(resp.JoinedRooms))
+	forEachConcurrently(resp.JoinedRooms, func(i int, roomID id.RoomID) {
+		if members, err := s.client.JoinedMembers(ctx, roomID); err == nil {
+			perRoom[i] = members
+		}
+	})
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+
+	index := make(map[id.UserID]*roomMember)
+	roomSize := make(map[string]int, len(perRoom))
+	for i, members := range perRoom {
+		if members == nil {
+			continue
+		}
+		roomSize[resp.JoinedRooms[i].String()] = len(members.Joined)
+		for userID, info := range members.Joined {
+			if userID == s.client.UserID {
+				continue
+			}
+			member, ok := index[userID]
+			if !ok {
+				member = &roomMember{userID: userID}
+				index[userID] = member
+			}
+			if member.displayName == "" {
+				member.displayName = info.DisplayName
+			}
+			if member.avatarURL == "" {
+				member.avatarURL = info.AvatarURL
+			}
+			member.roomIDs = append(member.roomIDs, resp.JoinedRooms[i].String())
+		}
+	}
+	// Smallest rooms first, so a DM (or bridged DM portal) leads the list.
+	for _, member := range index {
+		sort.Slice(member.roomIDs, func(i, j int) bool {
+			a, b := member.roomIDs[i], member.roomIDs[j]
+			if roomSize[a] != roomSize[b] {
+				return roomSize[a] < roomSize[b]
+			}
+			return a < b
 		})
 	}
-	return results, resp.Limited, nil
+	s.membersCache = index
+	s.membersCachedAt = time.Now()
+	return index, nil
+}
+
+// forEachConcurrently runs fn for every room with bounded concurrency.
+func forEachConcurrently(roomIDs []id.RoomID, fn func(int, id.RoomID)) {
+	sem := make(chan struct{}, roomListConcurrency)
+	var wg sync.WaitGroup
+	for i, roomID := range roomIDs {
+		wg.Add(1)
+		sem <- struct{}{}
+		go func() {
+			defer wg.Done()
+			defer func() { <-sem }()
+			fn(i, roomID)
+		}()
+	}
+	wg.Wait()
 }
 
 func (s *Service) GetProfile(ctx context.Context, userID string) (UserProfile, error) {
@@ -857,18 +1019,9 @@ func (s *Service) ListRooms(ctx context.Context) ([]RoomSummary, error) {
 	}
 
 	rooms := make([]RoomSummary, len(resp.JoinedRooms))
-	sem := make(chan struct{}, roomListConcurrency)
-	var wg sync.WaitGroup
-	for i, roomID := range resp.JoinedRooms {
-		wg.Add(1)
-		sem <- struct{}{}
-		go func() {
-			defer wg.Done()
-			defer func() { <-sem }()
-			rooms[i] = s.loadRoomSummary(ctx, roomID)
-		}()
-	}
-	wg.Wait()
+	forEachConcurrently(resp.JoinedRooms, func(i int, roomID id.RoomID) {
+		rooms[i] = s.loadRoomSummary(ctx, roomID)
+	})
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}

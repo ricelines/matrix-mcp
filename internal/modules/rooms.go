@@ -27,14 +27,14 @@ type listRoomsOutput struct {
 }
 
 func filterRooms(rooms []matrixclient.RoomSummary, query string) []matrixclient.RoomSummary {
-	query = strings.ToLower(strings.TrimSpace(query))
+	query = matrixclient.FoldSearchText(strings.TrimSpace(query))
 	if query == "" {
 		return rooms
 	}
 	matched := make([]matrixclient.RoomSummary, 0, len(rooms))
 	for _, room := range rooms {
 		for _, field := range []string{room.DisplayName, room.Name, room.CanonicalAlias, room.Topic, room.RoomID} {
-			if strings.Contains(strings.ToLower(field), query) {
+			if strings.Contains(matrixclient.FoldSearchText(field), query) {
 				matched = append(matched, room)
 				break
 			}
