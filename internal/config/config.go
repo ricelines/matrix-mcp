@@ -20,6 +20,7 @@ const (
 	envScopes            = "MATRIX_MCP_SCOPES"
 	envAuthToken         = "MATRIX_MCP_AUTH_TOKEN"
 	envAllowNoAuth       = "MATRIX_MCP_ALLOW_UNAUTHENTICATED"
+	envPublicURL         = "MATRIX_MCP_PUBLIC_URL"
 
 	defaultListenAddr = ":8080"
 )
@@ -33,6 +34,7 @@ type Config struct {
 	E2EEDBPath        string
 	AuthToken         string
 	AllowNoAuth       bool
+	PublicURL         string
 	Scopes            scopes.Set
 }
 
@@ -50,6 +52,7 @@ func FromEnv() (Config, error) {
 		RegistrationToken: strings.TrimSpace(os.Getenv(envRegistrationToken)),
 		E2EEDBPath:        strings.TrimSpace(os.Getenv(envE2EEDBPath)),
 		AuthToken:         strings.TrimSpace(os.Getenv(envAuthToken)),
+		PublicURL:         strings.TrimRight(strings.TrimSpace(os.Getenv(envPublicURL)), "/"),
 		Scopes:            parsedScopes,
 	}
 	if raw := strings.TrimSpace(os.Getenv(envAllowNoAuth)); raw != "" {

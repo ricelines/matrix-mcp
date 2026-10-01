@@ -14,6 +14,10 @@ import (
 )
 
 type fakeMatrix struct {
+	mediaInfo         matrixclient.MediaInfo
+	mediaData         []byte
+	mediaErr          error
+	mediaDownloads    int
 	identity          matrixclient.Identity
 	active            bool
 	versions          matrixclient.VersionInfo
@@ -111,6 +115,19 @@ func (f *fakeMatrix) SetAvatarURL(ctx context.Context, avatarURL string) error {
 func (f *fakeMatrix) SetPresence(ctx context.Context, req matrixclient.SetPresenceRequest) error {
 	f.lastPresence = req
 	return nil
+}
+func (f *fakeMatrix) ResolveEventMedia(ctx context.Context, roomID, eventID string) (matrixclient.MediaInfo, error) {
+	if f.mediaErr != nil {
+		return matrixclient.MediaInfo{}, f.mediaErr
+	}
+	return f.mediaInfo, nil
+}
+func (f *fakeMatrix) DownloadEventMedia(ctx context.Context, roomID, eventID string) (matrixclient.MediaInfo, []byte, error) {
+	f.mediaDownloads++
+	if f.mediaErr != nil {
+		return matrixclient.MediaInfo{}, nil, f.mediaErr
+	}
+	return f.mediaInfo, f.mediaData, nil
 }
 func (f *fakeMatrix) ListRooms(ctx context.Context) ([]matrixclient.RoomSummary, error) {
 	return f.rooms, nil

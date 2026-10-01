@@ -36,7 +36,7 @@ func AccessLog(next http.Handler) http.Handler {
 			status = http.StatusOK
 		}
 		log.Printf("http: %s %s %d %s ip=%s ua=%q auth=%s",
-			r.Method, r.URL.Path, status, time.Since(start).Round(time.Millisecond), clientIP(r), r.UserAgent(), info.auth)
+			r.Method, redactPath(r.URL.Path), status, time.Since(start).Round(time.Millisecond), clientIP(r), r.UserAgent(), info.auth)
 	})
 }
 
@@ -85,4 +85,12 @@ func (s *statusRecorder) Flush() {
 
 func (s *statusRecorder) Unwrap() http.ResponseWriter {
 	return s.ResponseWriter
+}
+
+// redactPath keeps media link tokens out of the log: they grant access.
+func redactPath(path string) string {
+	if strings.HasPrefix(path, mediaPathPrefix) && len(path) > len(mediaPathPrefix) {
+		return mediaPathPrefix + "<token>"
+	}
+	return path
 }

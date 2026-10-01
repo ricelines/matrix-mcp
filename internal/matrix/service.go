@@ -301,6 +301,8 @@ type API interface {
 	GetEvent(context.Context, string, string) (EventSummary, error)
 	GetEventContext(context.Context, string, string, int) (EventContextResult, error)
 	ListRelations(context.Context, ListRelationsRequest) (RelationsResult, error)
+	ResolveEventMedia(context.Context, string, string) (MediaInfo, error)
+	DownloadEventMedia(context.Context, string, string) (MediaInfo, []byte, error)
 	CreateRoom(context.Context, CreateRoomRequest) (CreateRoomResult, error)
 	JoinRoom(context.Context, JoinRoomRequest) (JoinRoomResult, error)
 	InviteRoomMember(context.Context, InviteRoomMemberRequest) (InviteRoomMemberResult, error)
