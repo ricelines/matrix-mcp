@@ -3,6 +3,7 @@ package modules
 import (
 	"context"
 	"encoding/json"
+	"mime"
 	"time"
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
@@ -74,7 +75,9 @@ func RegisterMedia(r *catalog.Registrar, deps Dependencies, active scopes.Set) {
 			out.Note = "download links are disabled: the server has no public URL configured (MATRIX_MCP_PUBLIC_URL)"
 		}
 
-		if input.SkipImage || !inlineImageTypes[info.MIMEType] || info.Size > maxInlineImageBytes {
+		// Senders may add parameters (e.g. "; charset"); clients want the bare type.
+		imageType, _, _ := mime.ParseMediaType(info.MIMEType)
+		if input.SkipImage || !inlineImageTypes[imageType] || info.Size > maxInlineImageBytes {
 			return nil, out, nil
 		}
 		_, data, err := deps.Matrix.DownloadEventMedia(ctx, input.RoomID, input.EventID)
@@ -91,7 +94,7 @@ func RegisterMedia(r *catalog.Registrar, deps Dependencies, active scopes.Set) {
 		}
 		return &mcp.CallToolResult{Content: []mcp.Content{
 			&mcp.TextContent{Text: string(text)},
-			&mcp.ImageContent{Data: data, MIMEType: info.MIMEType},
+			&mcp.ImageContent{Data: data, MIMEType: imageType},
 		}}, out, nil
 	})
 }

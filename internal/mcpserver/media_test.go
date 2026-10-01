@@ -112,6 +112,13 @@ func TestMediaDownloadAttachesSupportedImages(t *testing.T) {
 		t.Fatal("image_attached should be true")
 	}
 
+	// Media type parameters are stripped for the image block.
+	backend = &fakeMatrix{mediaInfo: matrixclient.MediaInfo{MsgType: "m.image", MIMEType: "image/jpeg; foo=bar"}, mediaData: []byte("jpeg")}
+	res = callMediaDownload(t, NewWithOptions(backend, scopes.Default(), Options{PublicURL: "https://mcp.example.com"}))
+	if len(res.Content) != 2 || res.Content[1].(*mcp.ImageContent).MIMEType != "image/jpeg" {
+		t.Fatalf("parametrized JPEG: %#v", res.Content)
+	}
+
 	// Formats Claude cannot read (HEIC) only get a link.
 	backend = &fakeMatrix{mediaInfo: matrixclient.MediaInfo{MsgType: "m.image", MIMEType: "image/heic"}, mediaData: []byte("heic")}
 	res = callMediaDownload(t, NewWithOptions(backend, scopes.Default(), Options{PublicURL: "https://mcp.example.com"}))
