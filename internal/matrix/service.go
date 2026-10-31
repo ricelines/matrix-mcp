@@ -395,6 +395,13 @@ func (s *Service) initCrypto(ctx context.Context, cfg config.Config) error {
 		return fmt.Errorf("initialize matrix crypto helper: %w", err)
 	}
 
+	if cfg.RecoveryKey != "" {
+		if err := bootstrapFromRecoveryKey(ctx, helper.Machine(), cfg.RecoveryKey); err != nil {
+			_ = helper.Close()
+			return err
+		}
+	}
+
 	s.client.Crypto = helper
 	s.cryptoHelper = helper
 	s.startSync(ctx)

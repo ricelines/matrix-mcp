@@ -8,12 +8,16 @@ func TestFromEnvDefaultsScopesAndListenAddr(t *testing.T) {
 	t.Setenv(envPassword, "secret")
 	t.Setenv(envRegistrationToken, " invite-token ")
 	t.Setenv(envE2EEDBPath, " data/e2ee.db ")
+	t.Setenv(envRecoveryKey, " EsTc abcd ")
 	t.Setenv(envListenAddr, "")
 	t.Setenv(envScopes, "")
 
 	cfg, err := FromEnv()
 	if err != nil {
 		t.Fatalf("FromEnv() error = %v", err)
+	}
+	if cfg.RecoveryKey != "EsTc abcd" {
+		t.Fatalf("RecoveryKey = %q, want %q", cfg.RecoveryKey, "EsTc abcd")
 	}
 	if cfg.ListenAddr != defaultListenAddr {
 		t.Fatalf("ListenAddr = %q, want %q", cfg.ListenAddr, defaultListenAddr)
@@ -33,6 +37,18 @@ func TestFromEnvRejectsMissingRequiredFields(t *testing.T) {
 	t.Setenv(envHomeserverURL, "")
 	t.Setenv(envUsername, "")
 	t.Setenv(envPassword, "")
+
+	if _, err := FromEnv(); err == nil {
+		t.Fatal("FromEnv() unexpectedly succeeded")
+	}
+}
+
+func TestFromEnvRejectsRecoveryKeyWithoutE2EE(t *testing.T) {
+	t.Setenv(envHomeserverURL, "http://example.com")
+	t.Setenv(envUsername, "bot")
+	t.Setenv(envPassword, "secret")
+	t.Setenv(envE2EEDBPath, "")
+	t.Setenv(envRecoveryKey, "EsTc abcd")
 
 	if _, err := FromEnv(); err == nil {
 		t.Fatal("FromEnv() unexpectedly succeeded")

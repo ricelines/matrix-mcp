@@ -179,6 +179,8 @@ Optional environment variables:
 - `MATRIX_MCP_LISTEN_ADDR`: listen address for the HTTP server, default `:8080`
 - `MATRIX_REGISTRATION_TOKEN`: registration token used by `matrix.v1.users.create` on homeservers that require `m.login.registration_token`
 - `MATRIX_MCP_SCOPES`: comma-separated scope list, default `default`
+- `MATRIX_E2EE_DB_PATH`: path of the SQLite crypto store; enables end-to-end encryption. Persist it: losing it means a new device
+- `MATRIX_RECOVERY_KEY`: account recovery key (the one clients show for Secure Backup). Requires `MATRIX_E2EE_DB_PATH`. On start, the server cross-signs its own device with the cross-signing keys from secret storage and imports the latest server-side key backup, so encrypted rooms that only share keys with verified devices (e.g. mautrix bridges with `verification_levels.share: cross-signed-tofu`) and older history become readable. Set it for one start, check the log for `device … cross-signed`, then remove it
 
 Example with explicit listen address, the safe opt-in set, and additional write capabilities:
 

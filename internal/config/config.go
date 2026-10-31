@@ -16,6 +16,7 @@ const (
 	envRegistrationToken = "MATRIX_REGISTRATION_TOKEN"
 	envE2EEDBPath        = "MATRIX_E2EE_DB_PATH"
 	envScopes            = "MATRIX_MCP_SCOPES"
+	envRecoveryKey       = "MATRIX_RECOVERY_KEY"
 
 	defaultListenAddr = ":8080"
 )
@@ -27,6 +28,7 @@ type Config struct {
 	Password          string
 	RegistrationToken string
 	E2EEDBPath        string
+	RecoveryKey       string
 	Scopes            scopes.Set
 }
 
@@ -43,6 +45,7 @@ func FromEnv() (Config, error) {
 		Password:          strings.TrimSpace(os.Getenv(envPassword)),
 		RegistrationToken: strings.TrimSpace(os.Getenv(envRegistrationToken)),
 		E2EEDBPath:        strings.TrimSpace(os.Getenv(envE2EEDBPath)),
+		RecoveryKey:       strings.TrimSpace(os.Getenv(envRecoveryKey)),
 		Scopes:            parsedScopes,
 	}
 	if cfg.ListenAddr == "" {
@@ -64,6 +67,9 @@ func (c Config) Validate() error {
 	}
 	if c.Password == "" {
 		problems = append(problems, envPassword+" is required")
+	}
+	if c.RecoveryKey != "" && c.E2EEDBPath == "" {
+		problems = append(problems, envRecoveryKey+" requires "+envE2EEDBPath)
 	}
 	if len(problems) > 0 {
 		return errors.New(strings.Join(problems, "; "))
