@@ -179,6 +179,7 @@ Optional environment variables:
 - `MATRIX_MCP_LISTEN_ADDR`: listen address for the HTTP server, default `:8080`
 - `MATRIX_REGISTRATION_TOKEN`: registration token used by `matrix.v1.users.create` on homeservers that require `m.login.registration_token`
 - `MATRIX_MCP_SCOPES`: comma-separated scope list, default `default`
+- `MATRIX_MCP_AUTH_TOKEN`: when set, every HTTP request must carry `Authorization: Bearer <token>`; otherwise the endpoint is unauthenticated (a warning is logged)
 
 Example with explicit listen address, the safe opt-in set, and additional write capabilities:
 

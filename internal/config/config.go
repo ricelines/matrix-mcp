@@ -16,6 +16,7 @@ const (
 	envRegistrationToken = "MATRIX_REGISTRATION_TOKEN"
 	envE2EEDBPath        = "MATRIX_E2EE_DB_PATH"
 	envScopes            = "MATRIX_MCP_SCOPES"
+	envAuthToken         = "MATRIX_MCP_AUTH_TOKEN"
 
 	defaultListenAddr = ":8080"
 )
@@ -27,6 +28,7 @@ type Config struct {
 	Password          string
 	RegistrationToken string
 	E2EEDBPath        string
+	AuthToken         string
 	Scopes            scopes.Set
 }
 
@@ -43,6 +45,7 @@ func FromEnv() (Config, error) {
 		Password:          strings.TrimSpace(os.Getenv(envPassword)),
 		RegistrationToken: strings.TrimSpace(os.Getenv(envRegistrationToken)),
 		E2EEDBPath:        strings.TrimSpace(os.Getenv(envE2EEDBPath)),
+		AuthToken:         strings.TrimSpace(os.Getenv(envAuthToken)),
 		Scopes:            parsedScopes,
 	}
 	if cfg.ListenAddr == "" {

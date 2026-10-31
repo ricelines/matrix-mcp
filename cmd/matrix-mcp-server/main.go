@@ -31,9 +31,12 @@ func main() {
 			log.Printf("close matrix-mcp: %v", err)
 		}
 	}()
+	if cfg.AuthToken == "" {
+		log.Printf("warning: MATRIX_MCP_AUTH_TOKEN is not set, the MCP endpoint is unauthenticated")
+	}
 	httpServer := &http.Server{
 		Addr:              cfg.ListenAddr,
-		Handler:           server.Handler(),
+		Handler:           mcpserver.RequireBearerToken(cfg.AuthToken, server.Handler()),
 		ReadHeaderTimeout: 10 * time.Second,
 	}
 
