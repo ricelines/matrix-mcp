@@ -2,7 +2,9 @@ package config
 
 import (
 	"errors"
+	"net"
 	"os"
+	"strconv"
 	"strings"
 
 	"github.com/ricelines/matrix-mcp/internal/scopes"
@@ -16,6 +18,8 @@ const (
 	envRegistrationToken = "MATRIX_REGISTRATION_TOKEN"
 	envE2EEDBPath        = "MATRIX_E2EE_DB_PATH"
 	envScopes            = "MATRIX_MCP_SCOPES"
+	envAuthToken         = "MATRIX_MCP_AUTH_TOKEN"
+	envAllowNoAuth       = "MATRIX_MCP_ALLOW_UNAUTHENTICATED"
 
 	defaultListenAddr = ":8080"
 )
@@ -27,6 +31,8 @@ type Config struct {
 	Password          string
 	RegistrationToken string
 	E2EEDBPath        string
+	AuthToken         string
+	AllowNoAuth       bool
 	Scopes            scopes.Set
 }
 
@@ -43,7 +49,14 @@ func FromEnv() (Config, error) {
 		Password:          strings.TrimSpace(os.Getenv(envPassword)),
 		RegistrationToken: strings.TrimSpace(os.Getenv(envRegistrationToken)),
 		E2EEDBPath:        strings.TrimSpace(os.Getenv(envE2EEDBPath)),
+		AuthToken:         strings.TrimSpace(os.Getenv(envAuthToken)),
 		Scopes:            parsedScopes,
+	}
+	if raw := strings.TrimSpace(os.Getenv(envAllowNoAuth)); raw != "" {
+		cfg.AllowNoAuth, err = strconv.ParseBool(raw)
+		if err != nil {
+			return Config{}, errors.New(envAllowNoAuth + " must be a boolean")
+		}
 	}
 	if cfg.ListenAddr == "" {
 		cfg.ListenAddr = defaultListenAddr
@@ -65,8 +78,25 @@ func (c Config) Validate() error {
 	if c.Password == "" {
 		problems = append(problems, envPassword+" is required")
 	}
+	// Fail closed: the endpoint acts with full account access, so it must not be
+	// reachable from other hosts without a token unless explicitly allowed.
+	if c.AuthToken == "" && !c.AllowNoAuth && c.ListenAddr != "" && !isLoopbackAddr(c.ListenAddr) {
+		problems = append(problems, envAuthToken+" is required when listening on a non-loopback address (set "+envAllowNoAuth+"=true to override)")
+	}
 	if len(problems) > 0 {
 		return errors.New(strings.Join(problems, "; "))
 	}
 	return nil
+}
+
+func isLoopbackAddr(addr string) bool {
+	host, _, err := net.SplitHostPort(addr)
+	if err != nil {
+		return false
+	}
+	if host == "localhost" {
+		return true
+	}
+	ip := net.ParseIP(host)
+	return ip != nil && ip.IsLoopback()
 }
