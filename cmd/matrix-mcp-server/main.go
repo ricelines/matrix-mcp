@@ -31,9 +31,15 @@ func main() {
 			log.Printf("close matrix-mcp: %v", err)
 		}
 	}()
+	if cfg.PublicURL == "" {
+		log.Printf("MATRIX_MCP_PUBLIC_URL is not set, media download links are disabled")
+	}
+	if cfg.AuthToken == "" {
+		log.Printf("warning: MATRIX_MCP_AUTH_TOKEN is not set, the MCP endpoint is unauthenticated")
+	}
 	httpServer := &http.Server{
 		Addr:              cfg.ListenAddr,
-		Handler:           server.Handler(),
+		Handler:           mcpserver.AccessLog(server.Routes(cfg.AuthToken)),
 		ReadHeaderTimeout: 10 * time.Second,
 	}
 

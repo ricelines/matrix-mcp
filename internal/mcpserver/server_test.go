@@ -14,6 +14,10 @@ import (
 )
 
 type fakeMatrix struct {
+	mediaInfo         matrixclient.MediaInfo
+	mediaData         []byte
+	mediaErr          error
+	mediaDownloads    int
 	identity          matrixclient.Identity
 	active            bool
 	versions          matrixclient.VersionInfo
@@ -56,6 +60,8 @@ type fakeMatrix struct {
 	lastDirectoryGet  string
 	lastDirectorySet  matrixclient.SetRoomDirectoryVisibilityRequest
 	lastSendText      matrixclient.SendTextRequest
+	lastSendFile      matrixclient.SendFileRequest
+	sendFileErr       error
 	lastReplyText     matrixclient.ReplyTextRequest
 	lastEditText      matrixclient.EditTextRequest
 	lastReact         matrixclient.ReactRequest
@@ -111,6 +117,19 @@ func (f *fakeMatrix) SetAvatarURL(ctx context.Context, avatarURL string) error {
 func (f *fakeMatrix) SetPresence(ctx context.Context, req matrixclient.SetPresenceRequest) error {
 	f.lastPresence = req
 	return nil
+}
+func (f *fakeMatrix) ResolveEventMedia(ctx context.Context, roomID, eventID string) (matrixclient.MediaInfo, error) {
+	if f.mediaErr != nil {
+		return matrixclient.MediaInfo{}, f.mediaErr
+	}
+	return f.mediaInfo, nil
+}
+func (f *fakeMatrix) DownloadEventMedia(ctx context.Context, roomID, eventID string) (matrixclient.MediaInfo, []byte, error) {
+	f.mediaDownloads++
+	if f.mediaErr != nil {
+		return matrixclient.MediaInfo{}, nil, f.mediaErr
+	}
+	return f.mediaInfo, f.mediaData, nil
 }
 func (f *fakeMatrix) ListRooms(ctx context.Context) ([]matrixclient.RoomSummary, error) {
 	return f.rooms, nil
@@ -250,6 +269,14 @@ func (f *fakeMatrix) SetRoomDirectoryVisibility(ctx context.Context, req matrixc
 	f.lastDirectorySet = req
 	return matrixclient.RoomDirectoryVisibilityResult{RoomID: req.RoomID, Visibility: req.Visibility}, nil
 }
+func (f *fakeMatrix) SendFile(ctx context.Context, req matrixclient.SendFileRequest) (matrixclient.EventWriteResult, error) {
+	f.lastSendFile = req
+	if f.sendFileErr != nil {
+		return matrixclient.EventWriteResult{}, f.sendFileErr
+	}
+	return matrixclient.EventWriteResult{EventID: "$file"}, nil
+}
+
 func (f *fakeMatrix) SendText(ctx context.Context, req matrixclient.SendTextRequest) (matrixclient.EventWriteResult, error) {
 	f.lastSendText = req
 	return f.sentMessage, nil

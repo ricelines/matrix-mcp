@@ -179,6 +179,9 @@ Optional environment variables:
 - `MATRIX_MCP_LISTEN_ADDR`: listen address for the HTTP server, default `:8080`
 - `MATRIX_REGISTRATION_TOKEN`: registration token used by `matrix.v1.users.create` on homeservers that require `m.login.registration_token`
 - `MATRIX_MCP_SCOPES`: comma-separated scope list, default `default`
+- `MATRIX_MCP_AUTH_TOKEN`: every HTTP request must carry `Authorization: Bearer <token>`. **Required** unless the listen address is loopback (`127.0.0.1:…`, `[::1]:…`, `localhost:…`) — the server refuses to start otherwise (fail closed). Generate with `openssl rand -hex 32`
+- `MATRIX_MCP_PUBLIC_URL`: externally reachable base URL of this server, e.g. `https://matrix-mcp.example.com`. `matrix.v1.media.download` issues links under `<url>/media/<token>` only when it is set. A link needs no auth header (the 256-bit token is the credential), expires after 30 minutes, and the token is redacted in the access log. It also enables `matrix.v1.media.upload_slot`: `PUT <url>/upload/<token>/[<filename>]` stages a file (up to 50 MB, at most 8 pending, 30 minutes, single use) for `matrix.v1.messages.send_file`; without it, `send_file` only takes `content_base64` (up to 2 MB)
+- `MATRIX_MCP_ALLOW_UNAUTHENTICATED`: `true` to run without a token on a non-loopback address anyway (e.g. behind an authenticating proxy)
 
 Example with explicit listen address, the safe opt-in set, and additional write capabilities:
 
@@ -206,6 +209,7 @@ If `MATRIX_MCP_SCOPES` is empty or unset, the server enables this default set:
 - `room.members.read`
 - `room.state.read`
 - `timeline.read`
+- `media.read`
 - `messages.send`
 - `messages.reply`
 - `messages.edit`

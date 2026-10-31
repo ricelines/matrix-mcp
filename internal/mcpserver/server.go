@@ -9,13 +9,16 @@ import (
 	"net/url"
 	"sort"
 	"strings"
+	"time"
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 	"github.com/ricelines/matrix-mcp/internal/catalog"
 	"github.com/ricelines/matrix-mcp/internal/config"
 	matrixclient "github.com/ricelines/matrix-mcp/internal/matrix"
+	"github.com/ricelines/matrix-mcp/internal/medialink"
 	"github.com/ricelines/matrix-mcp/internal/modules"
 	"github.com/ricelines/matrix-mcp/internal/scopes"
+	"github.com/ricelines/matrix-mcp/internal/uploadslot"
 )
 
 const (
@@ -24,29 +27,57 @@ const (
 )
 
 type Server struct {
-	server *mcp.Server
-	tools  []catalog.ToolMeta
-	mods   []catalog.ModuleMeta
-	scopes scopes.Set
-	close  func() error
+	server  *mcp.Server
+	tools   []catalog.ToolMeta
+	mods    []catalog.ModuleMeta
+	scopes  scopes.Set
+	close   func() error
+	matrix  matrixclient.API
+	links   *medialink.Store
+	uploads *uploadslot.Store
 }
+
+// Options configures optional server features.
+type Options struct {
+	// PublicURL is the externally reachable base URL; media download links are
+	// only issued when it is set.
+	PublicURL string
+	// MediaLinkTTL is how long a media download link stays valid.
+	MediaLinkTTL time.Duration
+}
+
+const (
+	defaultMediaLinkTTL = 30 * time.Minute
+	uploadSlotTTL       = 30 * time.Minute
+	// maxPendingUploads bounds memory held by staged files (each up to 50 MB).
+	maxPendingUploads = 8
+)
 
 func NewFromConfig(ctx context.Context, cfg config.Config) (*Server, error) {
 	matrix, err := matrixclient.New(ctx, cfg)
 	if err != nil {
 		return nil, err
 	}
-	server := New(matrix, cfg.Scopes)
+	server := NewWithOptions(matrix, cfg.Scopes, Options{PublicURL: cfg.PublicURL})
 	server.close = matrix.Close
 	return server, nil
 }
 
 func New(matrix matrixclient.API, active scopes.Set) *Server {
+	return NewWithOptions(matrix, active, Options{})
+}
+
+func NewWithOptions(matrix matrixclient.API, active scopes.Set, opts Options) *Server {
+	if opts.MediaLinkTTL <= 0 {
+		opts.MediaLinkTTL = defaultMediaLinkTTL
+	}
+	links := medialink.NewStore(opts.MediaLinkTTL)
+	uploads := uploadslot.NewStore(uploadSlotTTL, maxPendingUploads)
 	server := mcp.NewServer(&mcp.Implementation{Name: "matrix-mcp", Version: "0.1.0"}, nil)
 	registrar := catalog.NewRegistrar(server)
-	modules.RegisterAll(registrar, matrix, active)
+	modules.RegisterAll(registrar, matrix, active, modules.Options{PublicURL: opts.PublicURL, MediaLinks: links, Uploads: uploads})
 
-	result := &Server{server: server, tools: registrar.Tools(), mods: registrar.Modules(), scopes: active}
+	result := &Server{server: server, tools: registrar.Tools(), mods: registrar.Modules(), scopes: active, matrix: matrix, links: links, uploads: uploads}
 	result.registerResources()
 	return result
 }
