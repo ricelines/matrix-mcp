@@ -35,6 +35,7 @@ const (
 	ScopeRoomMembersRead       Scope = "room.members.read"
 	ScopeRoomStateRead         Scope = "room.state.read"
 	ScopeTimelineRead          Scope = "timeline.read"
+	ScopeMediaRead             Scope = "media.read"
 	ScopeMessagesSend          Scope = "messages.send"
 	ScopeMessagesReply         Scope = "messages.reply"
 	ScopeMessagesEdit          Scope = "messages.edit"
@@ -53,6 +54,7 @@ var defaultScopes = []Scope{
 	ScopeRoomMembersRead,
 	ScopeRoomStateRead,
 	ScopeTimelineRead,
+	ScopeMediaRead,
 	ScopeMessagesSend,
 	ScopeMessagesReply,
 	ScopeMessagesEdit,
@@ -93,6 +95,7 @@ var allScopes = []Info{
 	{Name: ScopeRoomMembersRead, Description: "Read joined-member information for a room."},
 	{Name: ScopeRoomStateRead, Description: "Read room state events."},
 	{Name: ScopeTimelineRead, Description: "Read room timelines, events, context, and relations."},
+	{Name: ScopeMediaRead, Description: "Download (and decrypt) event attachments and issue short-lived download links for them."},
 	{Name: ScopeMessagesSend, Description: "Send new text or notice messages."},
 	{Name: ScopeMessagesReply, Description: "Send reply messages."},
 	{Name: ScopeMessagesEdit, Description: "Edit previously sent messages."},

@@ -7,6 +7,7 @@ import (
 	"time"
 
 	matrixclient "github.com/ricelines/matrix-mcp/internal/matrix"
+	"github.com/ricelines/matrix-mcp/internal/medialink"
 )
 
 type Audit struct {
@@ -23,6 +24,9 @@ type Dependencies struct {
 	Matrix      matrixclient.API
 	Now         func() time.Time
 	RequestSeed *atomic.Uint64
+	// PublicURL is the externally reachable base URL used for media download links.
+	PublicURL  string
+	MediaLinks *medialink.Store
 }
 
 func (d Dependencies) baseResult() BaseResult {
