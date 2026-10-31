@@ -18,6 +18,7 @@ import (
 	"github.com/ricelines/matrix-mcp/internal/medialink"
 	"github.com/ricelines/matrix-mcp/internal/modules"
 	"github.com/ricelines/matrix-mcp/internal/scopes"
+	"github.com/ricelines/matrix-mcp/internal/uploadslot"
 )
 
 const (
@@ -26,13 +27,14 @@ const (
 )
 
 type Server struct {
-	server *mcp.Server
-	tools  []catalog.ToolMeta
-	mods   []catalog.ModuleMeta
-	scopes scopes.Set
-	close  func() error
-	matrix matrixclient.API
-	links  *medialink.Store
+	server  *mcp.Server
+	tools   []catalog.ToolMeta
+	mods    []catalog.ModuleMeta
+	scopes  scopes.Set
+	close   func() error
+	matrix  matrixclient.API
+	links   *medialink.Store
+	uploads *uploadslot.Store
 }
 
 // Options configures optional server features.
@@ -44,7 +46,12 @@ type Options struct {
 	MediaLinkTTL time.Duration
 }
 
-const defaultMediaLinkTTL = 30 * time.Minute
+const (
+	defaultMediaLinkTTL = 30 * time.Minute
+	uploadSlotTTL       = 30 * time.Minute
+	// maxPendingUploads bounds memory held by staged files (each up to 50 MB).
+	maxPendingUploads = 8
+)
 
 func NewFromConfig(ctx context.Context, cfg config.Config) (*Server, error) {
 	matrix, err := matrixclient.New(ctx, cfg)
@@ -65,11 +72,12 @@ func NewWithOptions(matrix matrixclient.API, active scopes.Set, opts Options) *S
 		opts.MediaLinkTTL = defaultMediaLinkTTL
 	}
 	links := medialink.NewStore(opts.MediaLinkTTL)
+	uploads := uploadslot.NewStore(uploadSlotTTL, maxPendingUploads)
 	server := mcp.NewServer(&mcp.Implementation{Name: "matrix-mcp", Version: "0.1.0"}, nil)
 	registrar := catalog.NewRegistrar(server)
-	modules.RegisterAll(registrar, matrix, active, modules.Options{PublicURL: opts.PublicURL, MediaLinks: links})
+	modules.RegisterAll(registrar, matrix, active, modules.Options{PublicURL: opts.PublicURL, MediaLinks: links, Uploads: uploads})
 
-	result := &Server{server: server, tools: registrar.Tools(), mods: registrar.Modules(), scopes: active, matrix: matrix, links: links}
+	result := &Server{server: server, tools: registrar.Tools(), mods: registrar.Modules(), scopes: active, matrix: matrix, links: links, uploads: uploads}
 	result.registerResources()
 	return result
 }

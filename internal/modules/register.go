@@ -8,12 +8,14 @@ import (
 	matrixclient "github.com/ricelines/matrix-mcp/internal/matrix"
 	"github.com/ricelines/matrix-mcp/internal/medialink"
 	"github.com/ricelines/matrix-mcp/internal/scopes"
+	"github.com/ricelines/matrix-mcp/internal/uploadslot"
 )
 
 // Options carries server-level settings that some modules need.
 type Options struct {
 	PublicURL  string
 	MediaLinks *medialink.Store
+	Uploads    *uploadslot.Store
 }
 
 func RegisterAll(r *catalog.Registrar, matrix matrixclient.API, active scopes.Set, opts Options) {
@@ -23,6 +25,7 @@ func RegisterAll(r *catalog.Registrar, matrix matrixclient.API, active scopes.Se
 		RequestSeed: &atomic.Uint64{},
 		PublicURL:   opts.PublicURL,
 		MediaLinks:  opts.MediaLinks,
+		Uploads:     opts.Uploads,
 	}
 	RegisterClient(r, deps, active)
 	RegisterServer(r, deps, active)
@@ -33,4 +36,5 @@ func RegisterAll(r *catalog.Registrar, matrix matrixclient.API, active scopes.Se
 	RegisterTimeline(r, deps, active)
 	RegisterMessages(r, deps, active)
 	RegisterMedia(r, deps, active)
+	RegisterSendFile(r, deps, active)
 }

@@ -315,6 +315,7 @@ type API interface {
 	GetRoomDirectoryVisibility(context.Context, string) (RoomDirectoryVisibilityResult, error)
 	SetRoomDirectoryVisibility(context.Context, SetRoomDirectoryVisibilityRequest) (RoomDirectoryVisibilityResult, error)
 	SendText(context.Context, SendTextRequest) (EventWriteResult, error)
+	SendFile(context.Context, SendFileRequest) (EventWriteResult, error)
 	ReplyText(context.Context, ReplyTextRequest) (EventWriteResult, error)
 	EditText(context.Context, EditTextRequest) (EventWriteResult, error)
 	React(context.Context, ReactRequest) (EventWriteResult, error)

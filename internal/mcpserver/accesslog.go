@@ -87,10 +87,13 @@ func (s *statusRecorder) Unwrap() http.ResponseWriter {
 	return s.ResponseWriter
 }
 
-// redactPath keeps media link tokens out of the log: they grant access.
+// redactPath keeps media link and upload slot tokens (they grant access) and
+// uploaded file names out of the log.
 func redactPath(path string) string {
-	if strings.HasPrefix(path, mediaPathPrefix) && len(path) > len(mediaPathPrefix) {
-		return mediaPathPrefix + "<token>"
+	for _, prefix := range []string{mediaPathPrefix, uploadPathPrefix} {
+		if strings.HasPrefix(path, prefix) && len(path) > len(prefix) {
+			return prefix + "<token>"
+		}
 	}
 	return path
 }

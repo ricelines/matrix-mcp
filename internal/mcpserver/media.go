@@ -12,11 +12,12 @@ import (
 
 const mediaPathPrefix = "/media/"
 
-// Routes serves the MCP endpoint behind bearer auth and the media download
-// links without it: a link's unguessable token is its own credential.
+// Routes serves the MCP endpoint behind bearer auth, and the media download
+// links and upload slots without it: their unguessable token is the credential.
 func (s *Server) Routes(authToken string) http.Handler {
 	mux := http.NewServeMux()
 	mux.Handle(mediaPathPrefix, s.MediaHandler())
+	mux.Handle(uploadPathPrefix, s.UploadHandler())
 	mux.Handle("/", RequireBearerToken(authToken, s.Handler()))
 	return mux
 }

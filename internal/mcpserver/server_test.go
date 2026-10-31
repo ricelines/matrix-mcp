@@ -60,6 +60,8 @@ type fakeMatrix struct {
 	lastDirectoryGet  string
 	lastDirectorySet  matrixclient.SetRoomDirectoryVisibilityRequest
 	lastSendText      matrixclient.SendTextRequest
+	lastSendFile      matrixclient.SendFileRequest
+	sendFileErr       error
 	lastReplyText     matrixclient.ReplyTextRequest
 	lastEditText      matrixclient.EditTextRequest
 	lastReact         matrixclient.ReactRequest
@@ -267,6 +269,14 @@ func (f *fakeMatrix) SetRoomDirectoryVisibility(ctx context.Context, req matrixc
 	f.lastDirectorySet = req
 	return matrixclient.RoomDirectoryVisibilityResult{RoomID: req.RoomID, Visibility: req.Visibility}, nil
 }
+func (f *fakeMatrix) SendFile(ctx context.Context, req matrixclient.SendFileRequest) (matrixclient.EventWriteResult, error) {
+	f.lastSendFile = req
+	if f.sendFileErr != nil {
+		return matrixclient.EventWriteResult{}, f.sendFileErr
+	}
+	return matrixclient.EventWriteResult{EventID: "$file"}, nil
+}
+
 func (f *fakeMatrix) SendText(ctx context.Context, req matrixclient.SendTextRequest) (matrixclient.EventWriteResult, error) {
 	f.lastSendText = req
 	return f.sentMessage, nil

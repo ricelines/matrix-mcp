@@ -8,6 +8,7 @@ import (
 
 	matrixclient "github.com/ricelines/matrix-mcp/internal/matrix"
 	"github.com/ricelines/matrix-mcp/internal/medialink"
+	"github.com/ricelines/matrix-mcp/internal/uploadslot"
 )
 
 type Audit struct {
@@ -27,6 +28,8 @@ type Dependencies struct {
 	// PublicURL is the externally reachable base URL used for media download links.
 	PublicURL  string
 	MediaLinks *medialink.Store
+	// Uploads stages files PUT to upload slots until a send consumes them.
+	Uploads *uploadslot.Store
 }
 
 func (d Dependencies) baseResult() BaseResult {
