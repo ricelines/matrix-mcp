@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"net"
 	"net/http"
+	"slices"
 	"sort"
 	"strings"
 	"sync"
@@ -29,6 +30,8 @@ const (
 	loginRetryInterval             = 250 * time.Millisecond
 	loginRetryTimeout              = 15 * time.Second
 	syncRetryInterval              = time.Second
+	roomListConcurrency            = 8
+	roomListCacheTTL               = 2 * time.Minute
 )
 
 var errEventContentUnavailable = errors.New("event content unavailable")
@@ -78,6 +81,7 @@ type CreateUserResult struct {
 
 type RoomSummary struct {
 	RoomID           string   `json:"room_id,omitempty"`
+	DisplayName      string   `json:"display_name,omitempty"`
 	AvatarURL        string   `json:"avatar_url,omitempty"`
 	CanonicalAlias   string   `json:"canonical_alias,omitempty"`
 	GuestCanJoin     bool     `json:"guest_can_join"`
@@ -330,6 +334,10 @@ type Service struct {
 	syncDone              chan struct{}
 	closeOnce             sync.Once
 	closeErr              error
+
+	roomsMu       sync.Mutex
+	roomsCache    []RoomSummary
+	roomsCachedAt time.Time
 }
 
 type managedCryptoHelper interface {
@@ -834,23 +842,79 @@ func (s *Service) SetPresence(ctx context.Context, req SetPresenceRequest) error
 	return nil
 }
 
+// ListRooms fetches a summary per joined room. Accounts with bridges easily
+// have hundreds of rooms, so summaries are fetched concurrently and cached briefly.
 func (s *Service) ListRooms(ctx context.Context) ([]RoomSummary, error) {
+	s.roomsMu.Lock()
+	defer s.roomsMu.Unlock()
+	if s.roomsCache != nil && time.Since(s.roomsCachedAt) < roomListCacheTTL {
+		return slices.Clone(s.roomsCache), nil
+	}
+
 	resp, err := s.client.JoinedRooms(ctx)
 	if err != nil {
 		return nil, fmt.Errorf("list joined rooms: %w", err)
 	}
 
-	rooms := make([]RoomSummary, 0, len(resp.JoinedRooms))
-	for _, roomID := range resp.JoinedRooms {
-		summary, err := s.client.GetRoomSummary(ctx, roomID.String())
-		if err != nil {
-			rooms = append(rooms, RoomSummary{RoomID: roomID.String()})
+	rooms := make([]RoomSummary, len(resp.JoinedRooms))
+	sem := make(chan struct{}, roomListConcurrency)
+	var wg sync.WaitGroup
+	for i, roomID := range resp.JoinedRooms {
+		wg.Add(1)
+		sem <- struct{}{}
+		go func() {
+			defer wg.Done()
+			defer func() { <-sem }()
+			rooms[i] = s.loadRoomSummary(ctx, roomID)
+		}()
+	}
+	wg.Wait()
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+
+	sort.Slice(rooms, func(i, j int) bool { return rooms[i].RoomID < rooms[j].RoomID })
+	s.roomsCache = rooms
+	s.roomsCachedAt = time.Now()
+	return slices.Clone(rooms), nil
+}
+
+func (s *Service) loadRoomSummary(ctx context.Context, roomID id.RoomID) RoomSummary {
+	room := RoomSummary{RoomID: roomID.String()}
+	if resp, err := s.client.GetRoomSummary(ctx, roomID.String()); err == nil {
+		room = toRoomSummary(resp, roomID.String())
+	}
+	room.DisplayName = s.roomDisplayName(ctx, room)
+	return room
+}
+
+// roomDisplayName mirrors how clients name rooms: the explicit name, then the
+// canonical alias, then the other joined members (bridged DM portals often
+// have no name of their own).
+func (s *Service) roomDisplayName(ctx context.Context, room RoomSummary) string {
+	if room.Name != "" {
+		return room.Name
+	}
+	if room.CanonicalAlias != "" {
+		return room.CanonicalAlias
+	}
+	members, err := s.client.JoinedMembers(ctx, id.RoomID(room.RoomID))
+	if err != nil {
+		return ""
+	}
+	names := make([]string, 0, len(members.Joined))
+	for userID, member := range members.Joined {
+		if userID == s.client.UserID {
 			continue
 		}
-		rooms = append(rooms, toRoomSummary(summary, roomID.String()))
+		name := member.DisplayName
+		if name == "" {
+			name = userID.String()
+		}
+		names = append(names, name)
 	}
-	sort.Slice(rooms, func(i, j int) bool { return rooms[i].RoomID < rooms[j].RoomID })
-	return rooms, nil
+	sort.Strings(names)
+	return strings.Join(names, ", ")
 }
 
 func (s *Service) GetRoom(ctx context.Context, roomID string) (RoomSummary, error) {
@@ -858,7 +922,9 @@ func (s *Service) GetRoom(ctx context.Context, roomID string) (RoomSummary, erro
 	if err != nil {
 		return RoomSummary{}, fmt.Errorf("get room summary: %w", err)
 	}
-	return toRoomSummary(resp, roomID), nil
+	room := toRoomSummary(resp, roomID)
+	room.DisplayName = s.roomDisplayName(ctx, room)
+	return room, nil
 }
 
 func (s *Service) PreviewRoom(ctx context.Context, roomIDOrAlias string, via []string) (RoomSummary, error) {
