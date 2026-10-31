@@ -2,6 +2,7 @@ package modules
 
 import (
 	"context"
+	"strings"
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 	"github.com/ricelines/matrix-mcp/internal/catalog"
@@ -9,9 +10,37 @@ import (
 	"github.com/ricelines/matrix-mcp/internal/scopes"
 )
 
+const (
+	defaultListRoomsLimit = 50
+	maxListRoomsLimit     = 1000
+)
+
+type listRoomsInput struct {
+	Query string `json:"query,omitempty" jsonschema:"Case-insensitive substring matched against room display name, name, alias, topic and room ID"`
+	Limit int    `json:"limit,omitempty" jsonschema:"Maximum number of rooms to return (default 50, max 1000)"`
+}
+
 type listRoomsOutput struct {
 	BaseResult
+	Total int                        `json:"total" jsonschema:"Number of joined rooms matching the query before the limit was applied"`
 	Rooms []matrixclient.RoomSummary `json:"rooms" jsonschema:"Joined rooms visible to the active Matrix account"`
+}
+
+func filterRooms(rooms []matrixclient.RoomSummary, query string) []matrixclient.RoomSummary {
+	query = strings.ToLower(strings.TrimSpace(query))
+	if query == "" {
+		return rooms
+	}
+	matched := make([]matrixclient.RoomSummary, 0, len(rooms))
+	for _, room := range rooms {
+		for _, field := range []string{room.DisplayName, room.Name, room.CanonicalAlias, room.Topic, room.RoomID} {
+			if strings.Contains(strings.ToLower(field), query) {
+				matched = append(matched, room)
+				break
+			}
+		}
+	}
+	return matched
 }
 
 type roomGetInput struct {
@@ -136,13 +165,23 @@ func RegisterRooms(r *catalog.Registrar, deps Dependencies, active scopes.Set) {
 	if active.Allows(scopes.ScopeRoomsRead) {
 		catalog.AddTool(r, "rooms", scopes.ScopeRoomsRead, &mcp.Tool{
 			Name:        "matrix.v1.rooms.list",
-			Description: "List rooms joined by the active Matrix account, including summary metadata when the homeserver provides it.",
-		}, func(ctx context.Context, req *mcp.CallToolRequest, input struct{}) (*mcp.CallToolResult, listRoomsOutput, error) {
+			Description: "List rooms joined by the active Matrix account, including summary metadata when the homeserver provides it. Filter with query (e.g. a contact or chat name) instead of listing everything; display_name is the name a client would show, computed from members for unnamed rooms.",
+		}, func(ctx context.Context, req *mcp.CallToolRequest, input listRoomsInput) (*mcp.CallToolResult, listRoomsOutput, error) {
 			rooms, err := deps.Matrix.ListRooms(ctx)
 			if err != nil {
 				return nil, listRoomsOutput{}, err
 			}
-			return nil, listRoomsOutput{BaseResult: deps.baseResult(), Rooms: rooms}, nil
+			rooms = filterRooms(rooms, input.Query)
+			total := len(rooms)
+			limit := input.Limit
+			if limit <= 0 {
+				limit = defaultListRoomsLimit
+			}
+			limit = min(limit, maxListRoomsLimit)
+			if len(rooms) > limit {
+				rooms = rooms[:limit]
+			}
+			return nil, listRoomsOutput{BaseResult: deps.baseResult(), Total: total, Rooms: rooms}, nil
 		})
 
 		catalog.AddTool(r, "rooms", scopes.ScopeRoomsRead, &mcp.Tool{
